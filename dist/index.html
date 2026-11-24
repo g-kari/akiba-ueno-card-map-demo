@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>秋葉原・上野 カードショップ地図</title><meta name="description" content="秋葉原から上野までの架空のカードショップを探す、非公式の操作デモ。">
+<link rel="stylesheet" href="style.css"><script defer src="store-data.js"></script><script defer src="app.js"></script><script defer src="cms.js"></script></head>
+<body><a class="skip" href="#results">店舗一覧へ</a>
+<header class="mast"><span class="brand"><svg aria-hidden="true" width="29" height="29" viewBox="0 0 30 30" fill="none"><path d="M4 8l7-3 8 3 7-3v17l-7 3-8-3-7 3V8zM11 5v17m8-14v17" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>カードショップ地図</span><nav aria-label="画面切替" class="mast-nav"><a href="#map-view" id="map-nav" aria-current="page">店舗検索</a><a href="#manage" id="cms-nav">店舗管理</a></nav></header>
+<main>
+<div id="map-view"><section class="intro" aria-labelledby="title"><div><h1 id="title">秋葉原・上野</h1><p>店名や駅名で、近くのカードショップを探す。</p></div><aside><b>架空データ・非公式デモ</b><br>掲載店は実在せず、在庫や営業を案内するものではありません。</aside></section>
+<section class="explorer" aria-label="店舗検索">
+<div class="tools">
+<form id="search" action="./" method="get" role="search">
+<fieldset class="search-mode"><legend>検索方法</legend><div class="choices"><label><input type="radio" name="mode" value="place" checked><span>地名・駅名</span></label><label><input type="radio" name="mode" value="name"><span>店名</span></label></div></fieldset>
+<label for="q" id="q-label">地名・駅名を入力</label><div class="search-line">
+<div class="searchbox"><svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none"><circle cx="10" cy="10" r="6.5" stroke="currentColor" stroke-width="2"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><input id="q" name="q" type="search" placeholder="例：秋葉原、御徒町" autocomplete="off"></div>
+<button class="action primary" type="submit">検索</button><button class="action quiet" id="toolbar-reset" type="button">条件をリセット</button></div></form>
+<fieldset><legend>店舗タイプで絞り込む</legend><div class="choices"><label><input type="radio" name="type" value="all" checked><span>すべて</span></label><label><input type="radio" name="type" value="shop"><span data-dot="shop">カードショップ</span></label><label><input type="radio" name="type" value="play"><span data-dot="play">対戦スペース</span></label><label><input type="radio" name="type" value="retail"><span data-dot="retail">取扱店</span></label></div></fieldset></div>
+<div class="shell">
+<section id="results" class="results" aria-labelledby="results-title"><div class="listhead"><h2 id="results-title">店舗一覧</h2><output id="count" role="status"></output></div><ol id="list"></ol><div id="empty" hidden><p>条件に合う店舗がありません。</p><button id="reset" type="button">条件をリセット</button></div></section>
+<section class="map-pane" aria-label="店舗地図">
+<div class="map-top"><strong>エリア地図</strong><div class="stations" aria-label="駅で絞り込む"><button type="button" data-station="秋葉原" aria-pressed="false">秋葉原</button><button type="button" data-station="御徒町" aria-pressed="false">御徒町</button><button type="button" data-station="上野" aria-pressed="false">上野</button></div></div>
+<div id="detail" class="detail" aria-live="polite"><strong>店舗を選択</strong><span>一覧または地図のピンから店舗を選べます。</span></div>
+<section id="pin-group" hidden aria-label="同じ座標の店舗"></section><div class="mapbox" id="mapbox">
+  <div id="tiles" aria-hidden="true"></div>
+  <svg class="schematic" id="schematic" viewBox="0 0 700 490" preserveAspectRatio="none" aria-hidden="true">
+    <defs><pattern id="blocks" width="78" height="58" patternUnits="userSpaceOnUse" patternTransform="rotate(-15)"><rect x="3" y="3" width="69" height="48" fill="#eeeef0" stroke="#dedeeb" stroke-width="1"/><path d="M27 3v48M47 3v48" stroke="#e6e6ec"/></pattern></defs>
+    <rect width="700" height="490" fill="#fafaf9"/><rect width="700" height="490" fill="url(#blocks)"/>
+    <path d="M0 0h225l-36 41-24 45-81 58H0z" fill="#dfe9d9"/><path d="M666 0l-34 91-60 79-22 106 33 120 84 94" fill="none" stroke="#fff" stroke-width="23"/>
+    <path d="M0 430c126 -20 223 15 363 18s222 -58 337 -44" fill="none" stroke="#b8d9dd" stroke-width="24"/>
+    <path d="M455 0C431 58 399 113 372 177S319 324 281 490" fill="none" stroke="#fff" stroke-width="17"/><path d="M455 0C431 58 399 113 372 177S319 324 281 490" fill="none" stroke="#687482" stroke-width="3" stroke-dasharray="5 5"/>
+    <path d="M0 271c207 25 414 47 700 2M0 168c207 25 414 47 700 2M0 360c207 25 414 47 700 2" stroke="#fff" stroke-width="8" fill="none"/>
+    <g fill="#354354" font-size="17" font-weight="700"><text x="75" y="58">上野公園</text><text x="458" y="65">上野駅</text><text x="408" y="214">御徒町駅</text><text x="317" y="433">秋葉原駅</text></g>
+    <g fill="#223444"><circle cx="431" cy="58" r="6"/><circle cx="365" cy="200" r="6"/><circle cx="301" cy="411" r="6"/></g>
+  </svg>
+  <div id="fallback-pins" aria-label="略図の店舗ピン"></div>
+  <div class="map-note"><span id="source">略図・正確な道路位置は示しません</span></div>
+</div>
+</section></div>
+</section>
+<noscript><p>このデモの検索には JavaScript が必要です。</p></noscript>
+<footer><span>地域限定の動作サンプル。位置情報は取得しません。</span><a href="stores.csv" download>初期データCSV</a></footer></div>
+<section id="manage" class="cms" hidden aria-labelledby="cms-title">
+<header class="cms-head"><h1 id="cms-title" tabindex="-1">店舗管理</h1><p>このブラウザーだけに保存します。他の端末や公開ページには反映されません。デモ用の架空店舗だけを登録してください。</p></header>
+<div class="cms-grid">
+<section aria-labelledby="managed-title"><div class="listhead"><h2 id="managed-title">登録済みの店舗</h2><span id="cms-count"></span></div><ul id="cms-list"></ul></section>
+<section class="cms-editor" aria-labelledby="editor-title">
+<h2 id="editor-title">新しい店舗を追加</h2>
+<form id="cms-form" method="post" action="./" aria-describedby="cms-help">
+<p id="cms-help">すべて必須です。緯度・経度は秋葉原〜上野のデモ範囲内で指定します。</p>
+<div class="cms-fields">
+<label class="wide">店舗名<input name="name" maxlength="80" required placeholder="例：見本カードショップ"></label>
+<label>最寄り駅<select name="station" required><option value="">駅を選択</option><option>秋葉原</option><option>御徒町</option><option>上野</option></select></label>
+<label>エリア<input name="area" maxlength="80" required placeholder="例：外神田"></label>
+<label class="wide">店舗タイプ<select name="type" required><option value="">タイプを選択</option><option value="shop">カードショップ</option><option value="play">対戦スペース</option><option value="retail">取扱店</option></select></label>
+<label>緯度<input name="lat" type="number" min="35.6968" max="35.7164" step="any" required placeholder="35.707"></label>
+<label>経度<input name="lon" type="number" min="139.7652" max="139.7818" step="any" required placeholder="139.774"></label>
+</div>
+<div class="cms-actions"><button class="action primary" type="submit" id="cms-save">追加する</button><button class="action" id="cms-new" type="button">新規入力</button><button class="action danger" id="cms-delete" type="button" hidden>この店舗を削除</button></div>
+</form>
+<section class="cms-transfer" aria-labelledby="transfer-title">
+<h3 id="transfer-title">データの持ち出し・復元</h3>
+<div class="cms-actions"><button class="action" id="cms-export" type="button">JSONを保存</button><button class="action" id="cms-import" type="button">JSONを読み込む</button></div>
+<input id="cms-file" type="file" accept=".json,application/json" hidden>
+<p>読み込むと、確認後にこのブラウザーの店舗一覧を置き換えます。</p>
+</section>
+<p id="cms-status" role="status"></p>
+</section></div>
+</section>
+</main></body></html>
