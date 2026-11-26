@@ -85,3 +85,25 @@ select:focus-visible{outline:3px solid #146ea1;outline-offset:2px}
   #cms-list{max-height:202px}
   .cms-editor{padding:.75rem}
 }
+
+/* Masthead auth area, view transitions, and list/pin motion. */
+.mast-auth{display:flex;align-items:center;gap:.55rem;padding:.4rem 0 .4rem .6rem}
+.mast-account{font-size:.8rem;color:#cfd6df;white-space:nowrap}
+.mast-auth-button{display:inline-flex;align-items:center;min-height:36px;padding:.35rem .65rem;border:1px solid #767e8b;background:transparent;color:#fff;font-size:.82rem;text-decoration:none;cursor:pointer}
+.mast-auth-button:hover{background:#262a33}
+#map-view,#manage,#login-gate{animation:view-in .32s ease both}
+@keyframes view-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+#list li{animation:view-in .3s ease both}
+#list li:nth-child(2){animation-delay:.03s}
+#list li:nth-child(3){animation-delay:.06s}
+#list li:nth-child(4){animation-delay:.09s}
+#list li:nth-child(5){animation-delay:.12s}
+#list li:nth-child(6){animation-delay:.15s}
+#list li:nth-child(7){animation-delay:.18s}
+#list li:nth-child(8){animation-delay:.21s}
+#list li:nth-child(9){animation-delay:.24s}
+.pin.compact{animation:pin-in .28s ease both}
+@keyframes pin-in{from{opacity:0}to{opacity:1}}
+.row,.action,.choices span,.stations button,.mast-nav a{transition:background-color .15s ease,color .15s ease,border-color .15s ease}
+@media(max-width:740px){.mast-account{display:none}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}

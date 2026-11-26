@@ -23,9 +23,15 @@ jobs:
           node --check dist/cms.js
           node --check test-store.js
           node --check test-browser.cjs
+          node --check src/worker.mjs
+          node --check src/oidc.mjs
+          node --check src/store-validation.mjs
+          node --check test-worker.mjs
       - name: Verify stores.json matches stores.csv
         run: |
           node build-data.mjs
           git diff --exit-code -- dist/stores.json
       - name: Store data tests
         run: node test-store.js
+      - name: Worker tests
+        run: node test-worker.mjs

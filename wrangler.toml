@@ -1,0 +1,33 @@
+name = "akiba-card-map"
+main = "src/worker.mjs"
+compatibility_date = "2026-11-01"
+
+# The frontend stays in dist/ and is served as static assets. Only the API
+# and auth paths run the worker first; everything else is served directly.
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/auth/*"]
+
+[[routes]]
+pattern = "akiba.0g0.xyz"
+custom_domain = true
+
+# The OIDC client is public (token_endpoint_auth_method "none" + PKCE S256),
+# so there is no OIDC_CLIENT_SECRET. Registered via DCR (RFC 7591) on
+# 2026-11-26 for redirect URI https://akiba.0g0.xyz/auth/callback.
+[vars]
+APP_ORIGIN = "https://akiba.0g0.xyz"
+OIDC_ISSUER = "https://id.0g0.xyz"
+OIDC_CLIENT_ID = "9c0cc6f400090e4099f7704e6ba7457f"
+OIDC_SCOPES = "openid profile email"
+# Optional: comma-separated internal account ids allowed to use the admin
+# API. Leave unset to allow any signed-in 0g0-id account. Never put an OIDC
+# sub here — internal account ids only.
+# ADMIN_ACCOUNT_IDS = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "akiba-card-map"
+database_id = "fe6af927-0863-488e-b601-2e37027ebfe7"
+migrations_dir = "migrations"
