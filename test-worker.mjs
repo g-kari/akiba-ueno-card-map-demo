@@ -266,4 +266,32 @@ try {
   globalThis.fetch = realFetch;
 }
 
+// ---------- DB provider switching (memory provider, no D1 binding) ----------
+{
+  const memEnv = {
+    DB_PROVIDER: "memory",
+    ASSETS: { fetch: async () => new Response("asset-body") },
+    APP_ORIGIN: ORIGIN,
+    OIDC_ISSUER: "https://id.0g0.xyz",
+    OIDC_CLIENT_ID: "test-client-id",
+    OIDC_SCOPES: "openid profile email",
+    WEBHOOK_SECRET: "mem-secret",
+  };
+  const memCall = (path, init = {}) => worker.fetch(new Request(ORIGIN + path, init), memEnv);
+  const empty = await (await memCall("/api/stores")).json();
+  ok(empty.stores.length === 0, "memory provider starts empty without a D1 binding");
+  const wh = await memCall("/api/webhooks/stores", {
+    method: "POST", headers: { "content-type": "application/json", "x-webhook-secret": "mem-secret" },
+    body: JSON.stringify({ stores: [{ id: "00042", name: "メモリ店", station: "那覇", area: "那覇市", type: "shop", lat: 26.21, lon: 127.67 }] }),
+  });
+  ok(wh.status === 200, "webhook works on the memory provider");
+  const filled = await (await memCall("/api/stores")).json();
+  ok(filled.stores.length === 1 && filled.stores[0].id === "00042", "memory provider keeps webhook stores");
+  const ev = await memCall("/api/events", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ store_id: "00042", kind: "place" }),
+  });
+  ok(ev.status === 204, "events work on the memory provider");
+}
+
 console.log(checks + " checks passed");

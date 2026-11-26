@@ -9,6 +9,7 @@
 // uses the internal account id instead.
 
 import { validate, validateRows, nextId } from "./store-validation.mjs";
+import { createDb } from "./db.mjs";
 import {
   getDiscovery, exchangeCode, verifyIdToken,
   randomToken, sha256Hex, pkceChallenge,
@@ -18,24 +19,6 @@ const SESSION_COOKIE = "akiba_session";
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const STATE_TTL_MS = 10 * 60 * 1000;
 const JSON_LIMIT = 8 * 1024 * 1024;
-
-const SQL = {
-  listStores: "SELECT id, name, station, area, type, lat, lon, verified, source_url, verified_at FROM stores ORDER BY id",
-  insertStore: "INSERT INTO stores (id, name, station, area, type, lat, lon, verified, source_url, verified_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  updateStore: "UPDATE stores SET name = ?, station = ?, area = ?, type = ?, lat = ?, lon = ?, verified = ?, source_url = ?, verified_at = ?, updated_at = ?, updated_by = ? WHERE id = ?",
-  deleteStore: "DELETE FROM stores WHERE id = ?",
-  clearStores: "DELETE FROM stores",
-  accountBySub: "SELECT id FROM accounts WHERE sub = ?",
-  insertAccount: "INSERT OR IGNORE INTO accounts (sub, created_at) VALUES (?, ?)",
-  insertState: "INSERT INTO oauth_states (state, nonce, code_verifier, expires_at) VALUES (?, ?, ?, ?)",
-  stateById: "SELECT nonce, code_verifier, expires_at FROM oauth_states WHERE state = ?",
-  deleteState: "DELETE FROM oauth_states WHERE state = ?",
-  insertSession: "INSERT INTO sessions (token_hash, account_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
-  sessionByHash: "SELECT account_id, expires_at FROM sessions WHERE token_hash = ?",
-  deleteSession: "DELETE FROM sessions WHERE token_hash = ?",
-  insertEvent: "INSERT INTO events (store_id, kind, created_at) VALUES (?, ?, ?)",
-  eventStats: "SELECT store_id, kind, COUNT(*) AS n FROM events GROUP BY store_id, kind",
-};
 
 function json(status, data, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -100,7 +83,7 @@ async function currentAccountId(request, env) {
   const token = sessionCookieValue(request);
   if (!token) return null;
   const hash = await sha256Hex(token);
-  const row = await env.DB.prepare(SQL.sessionByHash).bind(hash).first();
+  const row = await createDb(env).sessionByHash(hash);
   if (!row || row.expires_at <= Date.now()) return null;
   return row.account_id;
 }
@@ -126,9 +109,7 @@ async function handleLogin(request, env) {
   const state = randomToken(24);
   const nonce = randomToken(24);
   const verifier = randomToken(32);
-  await env.DB.prepare(SQL.insertState)
-    .bind(state, nonce, verifier, Date.now() + STATE_TTL_MS)
-    .run();
+  await createDb(env).insertState(state, nonce, verifier, Date.now() + STATE_TTL_MS);
   const url = new URL(discovery.authorization_endpoint);
   url.search = new URLSearchParams({
     response_type: "code",
@@ -148,9 +129,10 @@ async function handleCallback(request, env) {
   const code = params.get("code");
   const state = params.get("state");
   if (!code || !state) return fail(400, "認可応答が不正です。");
-  const saved = await env.DB.prepare(SQL.stateById).bind(state).first();
+  const db = createDb(env);
+  const saved = await db.stateById(state);
   if (!saved) return fail(400, "ログインの有効期限が切れました。もう一度ログインしてください。");
-  await env.DB.prepare(SQL.deleteState).bind(state).run();
+  await db.deleteState(state);
   if (saved.expires_at <= Date.now()) return fail(400, "ログインの有効期限が切れました。もう一度ログインしてください。");
 
   const { idToken } = await exchangeCode(env, {
@@ -162,15 +144,12 @@ async function handleCallback(request, env) {
 
   // The sub stays inside this table only; the rest of the app uses the
   // internal account id.
-  await env.DB.prepare(SQL.insertAccount).bind(sub, new Date().toISOString()).run();
-  const account = await env.DB.prepare(SQL.accountBySub).bind(sub).first();
-  if (!account) throw new Error("account lookup failed");
+  const accountId = await db.ensureAccount(sub, new Date().toISOString());
+  if (accountId === null) throw new Error("account lookup failed");
 
   const token = randomToken(32);
   const now = Date.now();
-  await env.DB.prepare(SQL.insertSession)
-    .bind(await sha256Hex(token), account.id, now + SESSION_TTL_SECONDS * 1000, new Date(now).toISOString())
-    .run();
+  await db.insertSession(await sha256Hex(token), accountId, now + SESSION_TTL_SECONDS * 1000, new Date(now).toISOString());
   return new Response(null, {
     status: 302,
     headers: {
@@ -184,7 +163,7 @@ async function handleCallback(request, env) {
 async function handleLogout(request, env) {
   const token = sessionCookieValue(request);
   if (token) {
-    await env.DB.prepare(SQL.deleteSession).bind(await sha256Hex(token)).run();
+    await createDb(env).deleteSession(await sha256Hex(token));
   }
   return new Response(null, {
     status: 204,
@@ -196,12 +175,13 @@ async function handleLogout(request, env) {
 }
 
 async function route(request, env, ctx) {
+  const db = createDb(env);
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method;
 
   if (path === "/api/stores" && method === "GET") {
-    const { results } = await env.DB.prepare(SQL.listStores).all();
+    const results = await db.listStores();
     return json(200, { version: 1, stores: results.map(storeOut) });
   }
 
@@ -211,7 +191,7 @@ async function route(request, env, ctx) {
       if (!body || !/^[0-9]{2,5}$/.test(body.store_id || "") || !["view", "place", "directions"].includes(body.kind)) {
         return fail(400, "イベントが不正です。");
       }
-      await env.DB.prepare(SQL.insertEvent).bind(body.store_id, body.kind, new Date().toISOString()).run();
+      await db.insertEvent(body.store_id, body.kind, new Date().toISOString());
       return new Response(null, { status: 204 });
     } catch {
       return fail(400, "イベントが不正です。");
@@ -234,7 +214,7 @@ async function route(request, env, ctx) {
     if (!Array.isArray(list) || list.length === 0 || list.length > 200) {
       return fail(400, "storesは1〜200件の配列で送ってください。");
     }
-    const { results } = await env.DB.prepare(SQL.listStores).all();
+    const results = await db.listStores();
     const existing = new Set(results.map((r) => r.id));
     const now = new Date().toISOString();
     let accepted = 0;
@@ -242,11 +222,10 @@ async function route(request, env, ctx) {
     for (let i = 0; i < list.length; i++) {
       try {
         const rec = stampVerified(validate(list[i]), now);
-        const args = [rec.name, rec.station, rec.area, rec.type, rec.lat, rec.lon, rec.verified ? 1 : 0, rec.source_url, rec.verified_at, now, null];
         if (existing.has(rec.id)) {
-          await env.DB.prepare(SQL.updateStore).bind(...args, rec.id).run();
+          await db.updateStore(rec.id, rec, now, null);
         } else {
-          await env.DB.prepare(SQL.insertStore).bind(rec.id, ...args).run();
+          await db.insertStore(rec, now, null);
           existing.add(rec.id);
         }
         accepted++;
@@ -261,7 +240,7 @@ async function route(request, env, ctx) {
   if (path === "/api/admin/stats" && method === "GET") {
     const auth = await requireAdmin(request, env);
     if (auth.error) return auth.error;
-    const { results } = await env.DB.prepare(SQL.eventStats).all();
+    const results = await db.eventStats();
     const totals = { view: 0, place: 0, directions: 0 };
     const stores = {};
     for (const r of results) {
@@ -292,12 +271,10 @@ async function route(request, env, ctx) {
       return fail(400, err.message);
     }
     const now = new Date().toISOString();
-    await env.DB.prepare(SQL.clearStores).run();
+    await db.clearStores();
     for (const r of rows) {
       stampVerified(r, now);
-      await env.DB.prepare(SQL.insertStore)
-        .bind(r.id, r.name, r.station, r.area, r.type, r.lat, r.lon, r.verified ? 1 : 0, r.source_url, r.verified_at, now, auth.accountId)
-        .run();
+      await db.insertStore(r, now, auth.accountId);
     }
     if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】一括取り込み: " + rows.length + "件"));
     return json(200, { count: rows.length });
@@ -308,12 +285,10 @@ async function route(request, env, ctx) {
     if (auth.error) return auth.error;
     try {
       const body = await readJson(request);
-      const { results } = await env.DB.prepare(SQL.listStores).all();
+      const results = await db.listStores();
       const now = new Date().toISOString();
       const record = stampVerified(validate({ ...body, id: nextId(results) }), now);
-      await env.DB.prepare(SQL.insertStore)
-        .bind(record.id, record.name, record.station, record.area, record.type, record.lat, record.lon, record.verified ? 1 : 0, record.source_url, record.verified_at, now, auth.accountId)
-        .run();
+      await db.insertStore(record, now, auth.accountId);
       if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】店舗を追加: " + record.name + "（" + record.id + "）"));
       return json(201, { store: record });
     } catch (err) {
@@ -327,8 +302,8 @@ async function route(request, env, ctx) {
     if (auth.error) return auth.error;
     const id = storeMatch[1];
     if (method === "DELETE") {
-      const res = await env.DB.prepare(SQL.deleteStore).bind(id).run();
-      if (!res.meta || res.meta.changes === 0) return fail(404, "店舗が見つかりません。");
+      const deleted = await db.deleteStore(id);
+      if (!deleted) return fail(404, "店舗が見つかりません。");
       if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】店舗を削除: " + id));
       return json(200, { deleted: id });
     }
@@ -336,10 +311,8 @@ async function route(request, env, ctx) {
       const body = await readJson(request);
       const now = new Date().toISOString();
       const record = stampVerified(validate({ ...body, id }), now);
-      const res = await env.DB.prepare(SQL.updateStore)
-        .bind(record.name, record.station, record.area, record.type, record.lat, record.lon, record.verified ? 1 : 0, record.source_url, record.verified_at, now, auth.accountId, id)
-        .run();
-      if (!res.meta || res.meta.changes === 0) return fail(404, "店舗が見つかりません。");
+      const updated = await db.updateStore(id, record, now, auth.accountId);
+      if (!updated) return fail(404, "店舗が見つかりません。");
       if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】店舗を更新: " + record.name + "（" + id + "）"));
       return json(200, { store: record });
     } catch (err) {
