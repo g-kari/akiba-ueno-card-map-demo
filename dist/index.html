@@ -3,7 +3,7 @@
 <title>秋葉原・上野 カードショップ地図</title><meta name="description" content="秋葉原から上野までの架空のカードショップを探す、非公式の操作デモ。">
 <link rel="stylesheet" href="style.css"><script defer src="store-data.js"></script><script defer src="app.js"></script><script defer src="cms.js"></script></head>
 <body><a class="skip" href="#results">店舗一覧へ</a>
-<header class="mast"><span class="brand"><svg aria-hidden="true" width="29" height="29" viewBox="0 0 30 30" fill="none"><path d="M4 8l7-3 8 3 7-3v17l-7 3-8-3-7 3V8zM11 5v17m8-14v17" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>カードショップ地図</span><nav aria-label="画面切替" class="mast-nav"><a href="#map-view" id="map-nav" aria-current="page">店舗検索</a><a href="#manage" id="cms-nav">店舗管理</a></nav></header>
+<header class="mast"><span class="brand"><svg aria-hidden="true" width="29" height="29" viewBox="0 0 30 30" fill="none"><path d="M4 8l7-3 8 3 7-3v17l-7 3-8-3-7 3V8zM11 5v17m8-14v17" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>カードショップ地図</span><nav aria-label="画面切替" class="mast-nav"><a href="#map-view" id="map-nav" aria-current="page">店舗検索</a><a href="#manage" id="cms-nav">店舗管理</a></nav><div class="mast-auth" id="auth-area"></div></header>
 <main>
 <div id="map-view"><section class="intro" aria-labelledby="title"><div><h1 id="title">秋葉原・上野</h1><p>店名や駅名で、近くのカードショップを探す。</p></div><aside><b>架空データ・非公式デモ</b><br>掲載店は実在せず、在庫や営業を案内するものではありません。</aside></section>
 <section class="explorer" aria-label="店舗検索">
@@ -24,8 +24,8 @@
   <svg class="schematic" id="schematic" viewBox="0 0 700 490" preserveAspectRatio="none" aria-hidden="true">
     <defs><pattern id="blocks" width="78" height="58" patternUnits="userSpaceOnUse" patternTransform="rotate(-15)"><rect x="3" y="3" width="69" height="48" fill="#eeeef0" stroke="#dedeeb" stroke-width="1"/><path d="M27 3v48M47 3v48" stroke="#e6e6ec"/></pattern></defs>
     <rect width="700" height="490" fill="#fafaf9"/><rect width="700" height="490" fill="url(#blocks)"/>
-    <path d="M0 0h225l-36 41-24 45-81 58H0z" fill="#dfe9d9"/><path d="M666 0l-34 91-60 79-22 106 33 120 84 94" fill="none" stroke="#fff" stroke-width="23"/>
-    <path d="M0 430c126 -20 223 15 363 18s222 -58 337 -44" fill="none" stroke="#b8d9dd" stroke-width="24"/>
+    <path d="M0 0h225l-36 41-24 45-81 58H0z" fill="#b7d2a4"/><path d="M666 0l-34 91-60 79-22 106 33 120 84 94" fill="none" stroke="#fff" stroke-width="23"/>
+    <path d="M0 430c126 -20 223 15 363 18s222 -58 337 -44" fill="none" stroke="#79aec4" stroke-width="24"/>
     <path d="M455 0C431 58 399 113 372 177S319 324 281 490" fill="none" stroke="#fff" stroke-width="17"/><path d="M455 0C431 58 399 113 372 177S319 324 281 490" fill="none" stroke="#687482" stroke-width="3" stroke-dasharray="5 5"/>
     <path d="M0 271c207 25 414 47 700 2M0 168c207 25 414 47 700 2M0 360c207 25 414 47 700 2" stroke="#fff" stroke-width="8" fill="none"/>
     <g fill="#354354" font-size="17" font-weight="700"><text x="75" y="58">上野公園</text><text x="458" y="65">上野駅</text><text x="408" y="214">御徒町駅</text><text x="317" y="433">秋葉原駅</text></g>
@@ -39,7 +39,7 @@
 <noscript><p>このデモの検索には JavaScript が必要です。</p></noscript>
 <footer><span>地域限定の動作サンプル。位置情報は取得しません。</span><a href="stores.csv" download>初期データCSV</a></footer></div>
 <section id="manage" class="cms" hidden aria-labelledby="cms-title">
-<header class="cms-head"><h1 id="cms-title" tabindex="-1">店舗管理</h1><p>このブラウザーだけに保存します。他の端末や公開ページには反映されません。デモ用の架空店舗だけを登録してください。</p></header>
+<header class="cms-head"><h1 id="cms-title" tabindex="-1">店舗管理</h1><p>店舗データはサーバーに保存され、公開ページの検索にも反映されます。変更できるのは 0g0-id でログインした管理者だけです。デモ用の架空店舗だけを登録してください。</p></header>
 <div class="cms-grid">
 <section aria-labelledby="managed-title"><div class="listhead"><h2 id="managed-title">登録済みの店舗</h2><span id="cms-count"></span></div><ul id="cms-list"></ul></section>
 <section class="cms-editor" aria-labelledby="editor-title">
@@ -60,9 +60,13 @@
 <h3 id="transfer-title">データの持ち出し・復元</h3>
 <div class="cms-actions"><button class="action" id="cms-export" type="button">JSONを保存</button><button class="action" id="cms-import" type="button">JSONを読み込む</button></div>
 <input id="cms-file" type="file" accept=".json,application/json" hidden>
-<p>読み込むと、確認後にこのブラウザーの店舗一覧を置き換えます。</p>
+<p>読み込むと、確認後にサーバーの店舗一覧を置き換えます。</p>
 </section>
 <p id="cms-status" role="status"></p>
 </section></div>
+</section>
+<section id="login-gate" class="cms" hidden aria-labelledby="gate-title">
+<header class="cms-head"><h1 id="gate-title" tabindex="-1">店舗管理にはログインが必要です</h1><p>店舗の追加・編集・削除は、0g0-id でログインした管理者だけが行えます。店舗の検索と地図はログインなしで使えます。</p></header>
+<p><a class="action primary" href="/auth/login">0g0-id でログイン</a></p>
 </section>
 </main></body></html>
