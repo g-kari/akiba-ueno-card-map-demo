@@ -45,7 +45,7 @@
 <section class="cms-editor" aria-labelledby="editor-title">
 <h2 id="editor-title">新しい店舗を追加</h2>
 <form id="cms-form" method="post" action="./" aria-describedby="cms-help">
-<p id="cms-help">すべて必須です。緯度・経度は秋葉原〜上野のデモ範囲内で指定します。</p>
+<p id="cms-help">すべて必須です。緯度・経度は秋葉原〜上野のデモ範囲内で指定します。下の略図でピンを刺しても指定できます。</p>
 <div class="cms-fields">
 <label class="wide">店舗名<input name="name" maxlength="80" required placeholder="例：見本カードショップ"></label>
 <label>最寄り駅<select name="station" required><option value="">駅を選択</option><option>秋葉原</option><option>御徒町</option><option>上野</option></select></label>
@@ -53,6 +53,17 @@
 <label class="wide">店舗タイプ<select name="type" required><option value="">タイプを選択</option><option value="shop">カードショップ</option><option value="play">対戦スペース</option><option value="retail">取扱店</option></select></label>
 <label>緯度<input name="lat" type="number" min="35.6968" max="35.7164" step="any" required placeholder="35.707"></label>
 <label>経度<input name="lon" type="number" min="139.7652" max="139.7818" step="any" required placeholder="139.774"></label>
+</div>
+<div class="cms-pinmap-block">
+<p class="cms-pinmap-label">地図でピンを刺す<span>クリック／タップで移動、ドラッグで微調整できます。緯度・経度の数値入力とも連動します。灰色の点は登録済みの店舗です。</span></p>
+<div id="cms-pinmap" aria-label="店舗の位置を選ぶ略図">
+<div id="cms-pinmap-dots" aria-hidden="true"></div>
+<span class="cms-station-tag" style="left:47.7%;top:86.9%">秋葉原駅</span>
+<span class="cms-station-tag" style="left:54.7%;top:46.9%">御徒町駅</span>
+<span class="cms-station-tag" style="left:67.9%;top:18.4%">上野駅</span>
+<div id="cms-pin" aria-hidden="true"></div>
+</div>
+<p id="cms-pin-coords" role="status"></p>
 </div>
 <div class="cms-actions"><button class="action primary" type="submit" id="cms-save">追加する</button><button class="action" id="cms-new" type="button">新規入力</button><button class="action danger" id="cms-delete" type="button" hidden>この店舗を削除</button></div>
 </form>

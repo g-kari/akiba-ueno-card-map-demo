@@ -8,6 +8,38 @@
   const editor=$("#editor-title"),remove=$("#cms-delete"),save=$("#cms-save");
   const gate=$("#login-gate"),authArea=$("#auth-area");
   let editing=null,ready=false,me=null;
+  // Pin picker: click or drag on the schematic map to set lat/lon, keeping
+  // the numeric inputs in sync. Uses the same projection as the public
+  // fallback map in app.js (rebuildPins), so the pin lands where the
+  // schematic shows it.
+  const pinmap=$("#cms-pinmap"),pinEl=$("#cms-pin"),pinDots=$("#cms-pinmap-dots"),pinCoords=$("#cms-pin-coords");
+  const stationPoints={"秋葉原":[35.6982,139.773],"御徒町":[35.7073,139.7745],"上野":[35.7138,139.7773]};
+  const centerPoint=[(region[0][1]+region[1][1])/2,(region[0][0]+region[1][0])/2];
+  function pinXY(lat,lon){return [11+(lon-region[0][0])/(region[1][0]-region[0][0])*78,7+(region[1][1]-lat)/(region[1][1]-region[0][1])*86];}
+  function pinLatLon(x,y){return [region[1][1]-(y-7)/86*(region[1][1]-region[0][1]),region[0][0]+(x-11)/78*(region[1][0]-region[0][0])];}
+  function placePin(lat,lon,write){
+    const la=Math.min(region[1][1],Math.max(region[0][1],lat)),lo=Math.min(region[1][0],Math.max(region[0][0],lon));
+    const [x,y]=pinXY(la,lo);pinEl.style.left=x+"%";pinEl.style.top=y+"%";
+    pinCoords.textContent="緯度 "+la.toFixed(4)+" ／ 経度 "+lo.toFixed(4);
+    if(write){form.elements.namedItem("lat").value=la.toFixed(4);form.elements.namedItem("lon").value=lo.toFixed(4);}
+  }
+  function syncPinFromInputs(){
+    const la=Number(form.elements.namedItem("lat").value),lo=Number(form.elements.namedItem("lon").value);
+    if(Number.isFinite(la)&&Number.isFinite(lo)&&la>=region[0][1]&&la<=region[1][1]&&lo>=region[0][0]&&lo<=region[1][0])placePin(la,lo,false);
+  }
+  function renderPinDots(){
+    pinDots.replaceChildren();
+    for(const r of rows){const d=node("span",null,{class:"cms-dot",title:r.name});const [x,y]=pinXY(r.lat,r.lon);d.style.left=x+"%";d.style.top=y+"%";pinDots.append(d);}
+  }
+  let pinDrag=false;
+  function pinFromEvent(e){const rect=pinmap.getBoundingClientRect();const [la,lo]=pinLatLon((e.clientX-rect.left)/rect.width*100,(e.clientY-rect.top)/rect.height*100);placePin(la,lo,true);}
+  pinmap.addEventListener("pointerdown",e=>{pinDrag=true;pinmap.setPointerCapture(e.pointerId);pinFromEvent(e);});
+  pinmap.addEventListener("pointermove",e=>{if(pinDrag)pinFromEvent(e);});
+  pinmap.addEventListener("pointerup",()=>{pinDrag=false;});
+  pinmap.addEventListener("pointercancel",()=>{pinDrag=false;});
+  for(const key of ["lat","lon"])form.elements.namedItem(key).addEventListener("input",syncPinFromInputs);
+  form.elements.namedItem("station").addEventListener("change",e=>{const p=stationPoints[e.target.value];if(p)placePin(p[0],p[1],true);});
+  placePin(centerPoint[0],centerPoint[1],true);
   function message(text){status.textContent=text;}
   async function api(path,init){
     const res=await fetch(path,init);
@@ -53,12 +85,14 @@
   }
   function reset(focus=false){
     editing=null;form.reset();editor.textContent="新しい店舗を追加";save.textContent="追加する";remove.hidden=true;
+    placePin(centerPoint[0],centerPoint[1],true);
     if(focus)form.elements.namedItem("name").focus();
   }
   function edit(id){
     const r=rows.find(a=>a.id===id);if(!r)return;
     editing=id;editor.textContent="店舗を編集";
     for(const key of ["name","station","area","type","lat","lon"])form.elements.namedItem(key).value=r[key];
+    placePin(r.lat,r.lon,false);
     save.textContent="変更を保存";remove.hidden=false;message("「"+r.name+"」を編集中です。");form.elements.namedItem("name").focus();
   }
   function renderList(){
@@ -69,6 +103,7 @@
       block.append(node("strong",r.name),node("small",r.station+" ／ "+labels[r.type]));
       b.addEventListener("click",()=>edit(r.id));li.append(block,b);list.append(li);
     }
+    renderPinDots();
   }
   addEventListener("hashchange",route);
   (async()=>{

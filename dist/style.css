@@ -107,3 +107,13 @@ select:focus-visible{outline:3px solid #146ea1;outline-offset:2px}
 .row,.action,.choices span,.stations button,.mast-nav a{transition:background-color .15s ease,color .15s ease,border-color .15s ease}
 @media(max-width:740px){.mast-account{display:none}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
+
+/* Admin pin picker: click/drag on the schematic to set lat/lon. */
+.cms-pinmap-block{margin-top:.85rem}
+.cms-pinmap-label{font-size:.85rem;font-weight:750;margin:0 0 .35rem}
+.cms-pinmap-label span{display:block;font-weight:400;color:var(--dim);font-size:.78rem;margin-top:.15rem;line-height:1.5}
+#cms-pinmap{position:relative;height:280px;border:1px solid var(--control,#8b95a2);background-color:#fafaf9;background-image:repeating-linear-gradient(0deg,transparent,transparent 34px,#e3e4e8 34px,#e3e4e8 35px),repeating-linear-gradient(90deg,transparent,transparent 34px,#e3e4e8 34px,#e3e4e8 35px);cursor:crosshair;touch-action:none;overflow:hidden}
+#cms-pinmap-dots .cms-dot{position:absolute;width:9px;height:9px;border-radius:50%;background:#8b95a2;border:1.5px solid #fff;transform:translate(-50%,-50%)}
+.cms-station-tag{position:absolute;transform:translate(-50%,-50%);font-size:.72rem;font-weight:700;color:#354354;background:#ffffffd9;padding:.08rem .3rem;border:1px solid var(--line);pointer-events:none}
+#cms-pin{position:absolute;width:30px;height:30px;background:var(--accent);border:2px solid #fff;box-shadow:0 1px 4px #1116;border-radius:50% 50% 50% 6px;transform:translate(-50%,-92%) rotate(-12deg);pointer-events:none;z-index:2}
+#cms-pin-coords{font-size:.8rem;color:var(--dim);margin:.35rem 0 0;font-variant-numeric:tabular-nums;min-height:1.3em}

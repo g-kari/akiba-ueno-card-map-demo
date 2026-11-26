@@ -4,12 +4,12 @@
     "wrangler": "^4.0.0"
   },
   "name": "akiba-card-map",
-  "private": true,
   "scripts": {
     "check": "node --check dist/store-data.js && node --check dist/app.js && node --check dist/cms.js && node --check src/worker.mjs && node --check src/oidc.mjs && node --check src/store-validation.mjs",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "test": "node test-store.js && node test-worker.mjs"
   },
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "license": "MIT"
 }
