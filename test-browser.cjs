@@ -21,7 +21,7 @@ for(const width of [1440,390]){
   await route.fulfill({status:200,contentType:files[filename.split(".").pop()],body:fs.readFileSync(file)});
  });
  await page.goto(url);
- await page.waitForFunction(()=>document.querySelector("#count").textContent==="9 件");
+ await page.waitForFunction(()=>document.querySelector("#count").textContent==="30 件");
  await page.screenshot({path:"/tmp/cardmap-qa-"+width+".png",fullPage:true});
  await page.locator("#q").fill("Okachimachi");
  assert.equal(await page.locator("#count").textContent(),"3 件");
@@ -32,7 +32,7 @@ for(const width of [1440,390]){
  assert.equal(new URL(await page.getByRole("link",{name:"Google マップで位置を見る"}).getAttribute("href")).searchParams.get("query"),"35.7107,139.7787");
  assert.equal(new URL(await page.getByRole("link",{name:"徒歩ルートの例"}).getAttribute("href")).searchParams.get("travelmode"),"walking");
  await page.locator("#toolbar-reset").click();
- assert.equal(await page.locator("#count").textContent(),"9 件");
+ assert.equal(await page.locator("#count").textContent(),"30 件");
  assert.ok(await page.locator("#toolbar-reset").isVisible());
  await page.locator("#cms-nav").click();
  await page.getByLabel("店舗名",{exact:true}).fill("動作確認デモ店舗");
@@ -42,9 +42,9 @@ for(const width of [1440,390]){
  await page.getByLabel("緯度",{exact:true}).fill("35.7002");
  await page.getByLabel("経度",{exact:true}).fill("139.7708");
  await page.locator("#cms-save").click();
- assert.equal(await page.locator("#cms-count").textContent(),"10 件");
+ assert.equal(await page.locator("#cms-count").textContent(),"31 件");
  await page.reload();
- await page.waitForFunction(()=>document.querySelector("#cms-count").textContent==="10 件");
+ await page.waitForFunction(()=>document.querySelector("#cms-count").textContent==="31 件");
  await page.screenshot({path:"/tmp/cardmap-cms-qa-"+width+".png",fullPage:true});
  await page.getByRole("button",{name:"動作確認デモ店舗を編集"}).click();
  await page.getByLabel("店舗名",{exact:true}).fill("確認済みデモ店舗");
@@ -63,12 +63,12 @@ for(const width of [1440,390]){
  await page.locator("#cms-nav").click();
  await page.getByRole("button",{name:"確認済みデモ店舗を編集"}).click();
  await page.locator("#cms-delete").click();
- await page.waitForFunction(()=>document.querySelector("#cms-count").textContent==="9 件");
+ await page.waitForFunction(()=>document.querySelector("#cms-count").textContent==="30 件");
  await page.locator("#cms-file").setInputFiles({name:"backup.json",mimeType:"application/json",buffer:backup});
- await page.waitForFunction(()=>document.querySelector("#cms-count").textContent==="10 件");
+ await page.waitForFunction(()=>document.querySelector("#cms-count").textContent==="31 件");
  await page.locator("#cms-file").setInputFiles({name:"bad.json",mimeType:"application/json",buffer:Buffer.from('{"version":2,"stores":[]}')});
  await page.waitForFunction(()=>document.querySelector("#cms-status").textContent.includes("読み込めませんでした"));
- assert.equal(await page.locator("#cms-count").textContent(),"10 件");
+ assert.equal(await page.locator("#cms-count").textContent(),"31 件");
  for(const route of ["#manage","#map-view"]){
   await page.goto(url+route);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
