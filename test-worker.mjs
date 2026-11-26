@@ -20,15 +20,18 @@ function throws(fn, label) {
 const good = { id: "01", name: "見本店", station: "秋葉原", area: "外神田", type: "shop", lat: 35.7, lon: 139.77 };
 ok(validate(good).name === "見本店", "validate accepts a good row");
 throws(() => validate({ ...good, station: "新橋" }), "validate rejects an unknown station");
-throws(() => validate({ ...good, lat: 36.5 }), "validate rejects out-of-region lat");
+throws(() => validate({ ...good, lat: 50 }), "validate rejects out-of-region lat");
+throws(() => validate({ ...good, verified: true }), "validate rejects verified without a source URL");
+ok(validate({ ...good, verified: true, source_url: "https://example.com/shop" }).verified === true, "validate accepts verified with a source URL");
 throws(() => validate({ ...good, name: "  " }), "validate rejects a blank name");
 throws(() => validateRows([good, good]), "validateRows rejects duplicate ids");
-ok(nextId([good, { ...good, id: "03" }]) === "02", "nextId picks the smallest unused id");
+ok(nextId([{ ...good, id: "00001" }, { ...good, id: "00003" }]) === "00002", "nextId picks the smallest unused id");
 
 // ---------- fake D1 ----------
 function fakeDb(seedStores) {
   const db = {
     stores: seedStores.map((r) => ({ ...r })),
+    events: [],
     accounts: [],
     sessions: new Map(),
     states: new Map(),
@@ -38,15 +41,19 @@ function fakeDb(seedStores) {
     return {
       async run() {
         if (sql.startsWith("INSERT INTO stores")) {
-          const [id, name, station, area, type, lat, lon, updated_at, updated_by] = args;
-          db.stores.push({ id, name, station, area, type, lat, lon, updated_at, updated_by });
+          const [id, name, station, area, type, lat, lon, verified, source_url, verified_at, updated_at, updated_by] = args;
+          db.stores.push({ id, name, station, area, type, lat, lon, verified, source_url, verified_at, updated_at, updated_by });
+          return { meta: { changes: 1 } };
+        }
+        if (sql.startsWith("INSERT INTO events")) {
+          db.events.push({ store_id: args[0], kind: args[1], created_at: args[2] });
           return { meta: { changes: 1 } };
         }
         if (sql.startsWith("UPDATE stores")) {
-          const [name, station, area, type, lat, lon, updated_at, updated_by, id] = args;
+          const [name, station, area, type, lat, lon, verified, source_url, verified_at, updated_at, updated_by, id] = args;
           const row = db.stores.find((r) => r.id === id);
           if (!row) return { meta: { changes: 0 } };
-          Object.assign(row, { name, station, area, type, lat, lon, updated_at, updated_by });
+          Object.assign(row, { name, station, area, type, lat, lon, verified, source_url, verified_at, updated_at, updated_by });
           return { meta: { changes: 1 } };
         }
         if (sql === "DELETE FROM stores WHERE id = ?") {
@@ -82,6 +89,14 @@ function fakeDb(seedStores) {
       async all() {
         if (sql.startsWith("SELECT id, name, station")) {
           return { results: [...db.stores].sort((a, b) => a.id.localeCompare(b.id)) };
+        }
+        if (sql.includes("FROM events")) {
+          const map = new Map();
+          for (const e of db.events) {
+            const key = e.store_id + "|" + e.kind;
+            map.set(key, (map.get(key) || 0) + 1);
+          }
+          return { results: [...map.entries()].map(([key, n]) => { const [store_id, kind] = key.split("|"); return { store_id, kind, n }; }) };
         }
         throw new Error("fake D1: unhandled all SQL: " + sql);
       },
@@ -196,24 +211,57 @@ try {
     body: JSON.stringify({ name: "三号店", station: "御徒町", area: "上野", type: "retail", lat: 35.7089, lon: 139.7746 }),
   });
   const createdBody = await created.json();
-  ok(created.status === 201 && createdBody.store.id === "03", "signed-in admin can create a store (server-assigned id)");
+  ok(created.status === 201 && createdBody.store.id === "00001", "signed-in admin can create a store (server-assigned id)");
 
   const invalid = await call("/api/admin/stores", {
     method: "POST",
     headers: { cookie: sessionPair, origin: ORIGIN, "content-type": "application/json" },
-    body: JSON.stringify({ name: "範囲外店", station: "秋葉原", area: "外神田", type: "shop", lat: 36.5, lon: 139.77 }),
+    body: JSON.stringify({ name: "範囲外店", station: "秋葉原", area: "外神田", type: "shop", lat: 50, lon: 139.77 }),
   });
   ok(invalid.status === 400, "admin create with out-of-region coordinates is 400");
 
-  const removed = await call("/api/admin/stores/03", { method: "DELETE", headers: { cookie: sessionPair, origin: ORIGIN } });
+  const removed = await call("/api/admin/stores/00001", { method: "DELETE", headers: { cookie: sessionPair, origin: ORIGIN } });
   ok(removed.status === 200, "signed-in admin can delete a store");
-  const removedAgain = await call("/api/admin/stores/03", { method: "DELETE", headers: { cookie: sessionPair, origin: ORIGIN } });
+  const removedAgain = await call("/api/admin/stores/00001", { method: "DELETE", headers: { cookie: sessionPair, origin: ORIGIN } });
   ok(removedAgain.status === 404, "deleting a missing store is 404");
 
   const logout = await call("/auth/logout", { method: "POST", headers: { cookie: sessionPair } });
   ok(logout.status === 204, "POST /auth/logout succeeds");
   const meAfter = await call("/api/me", { headers: { cookie: sessionPair } });
   ok(meAfter.status === 401, "the session is gone after logout");
+
+  // ---------- inflow events + webhook intake ----------
+  const evOk = await call("/api/events", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ store_id: "01", kind: "view" }),
+  });
+  ok(evOk.status === 204, "public inflow event is accepted");
+  const evBad = await call("/api/events", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ store_id: "01", kind: "hack" }),
+  });
+  ok(evBad.status === 400, "unknown event kind is 400");
+
+  const whOff = await call("/api/webhooks/stores", {
+    method: "POST", headers: { "content-type": "application/json" }, body: "[]",
+  });
+  ok(whOff.status === 503, "webhook is 503 until configured");
+  env.WEBHOOK_SECRET = "test-webhook-secret";
+  const whBad = await call("/api/webhooks/stores", {
+    method: "POST", headers: { "content-type": "application/json", "x-webhook-secret": "wrong" }, body: "[]",
+  });
+  ok(whBad.status === 401, "webhook rejects a wrong secret");
+  const whOk = await call("/api/webhooks/stores", {
+    method: "POST", headers: { "content-type": "application/json", "x-webhook-secret": "test-webhook-secret" },
+    body: JSON.stringify({ stores: [
+      { id: "00077", name: "Webhook店", station: "札幌", area: "札幌市中央区", type: "shop", lat: 43.07, lon: 141.35 },
+      { id: "00078", name: "不正駅店", station: "新橋", area: "港区", type: "shop", lat: 35.66, lon: 139.75 },
+    ] }),
+  });
+  const whBody = await whOk.json();
+  ok(whOk.status === 200 && whBody.accepted === 1 && whBody.rejected.length === 1, "webhook upserts valid rows and reports rejected rows");
+  const pub = await (await call("/api/stores")).json();
+  ok(pub.stores.some((r) => r.id === "00077" && r.verified === false), "webhook store appears in the public API");
 } finally {
   globalThis.fetch = realFetch;
 }
