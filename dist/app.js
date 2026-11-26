@@ -70,19 +70,26 @@ function updateSelection(){
     els.detail.replaceChildren(node("strong",r.id+"  "+r.name),node("span",r.station+"エリア ／ "+r.area+" ／ "+labels[r.type]),actions,node("small","架空店舗です。リンク先はデモ座標で、実店舗への案内ではありません。"));
   }else els.detail.replaceChildren(node("strong","店舗を選択"),node("span","一覧または地図のピンから店舗を選べます。"));
 }
+function fitToResults(padding){
+  if(!mapReady||!filtered.length)return;
+  const points=filtered.map(r=>[r.lon,r.lat]);
+  const bounds=new maplibregl.LngLatBounds(points[0],points[0]);
+  points.forEach(p=>bounds.extend(p));
+  map.fitBounds(bounds,{padding,maxZoom:16,duration:reduced.matches?0:380});
+}
 function select(id,center){$("#pin-group").hidden=true;state.selected=id;setHash();updateSelection();if(center&&mapReady){const r=filtered.find(t=>t.id===id);if(r)map.easeTo({center:[r.lon,r.lat],duration:reduced.matches?0:380})}
 if(!center&&els.list.scrollHeight>els.list.clientHeight){const row=buttons.find(b=>b.dataset.id===id);if(row){const parent=els.list.getBoundingClientRect(),child=row.getBoundingClientRect();if(child.top<parent.top||child.bottom>parent.bottom)els.list.scrollTop+=child.top-parent.top}}
 }
 function clear(){state.query="";state.type="all";state.selected=null;els.q.value="";radios[0].checked=true;setSearchMode("place");refresh();els.q.focus()}
 $("#search").addEventListener("submit",e=>{
   e.preventDefault();state.query=els.q.value;refresh();
-  if(mapReady&&filtered.length){const p=filtered.map(r=>[r.lon,r.lat]);const bounds=new maplibregl.LngLatBounds(p[0],p[0]);p.forEach(v=>bounds.extend(v));map.fitBounds(bounds,{padding:48,maxZoom:16,duration:reduced.matches?0:380});}
+  fitToResults(48);
 });
 els.q.addEventListener("input",e=>{if(!e.isComposing){state.query=e.target.value;refresh()}});
 els.q.addEventListener("compositionend",e=>{state.query=e.target.value;refresh()});
 radios.forEach(b=>b.addEventListener("change",()=>{state.type=b.value;refresh()}));
 modes.forEach(b=>b.addEventListener("change",()=>{setSearchMode(b.value);refresh()}));
-stations.forEach(b=>b.addEventListener("click",()=>{const priorMode=state.mode;setSearchMode("place");state.query=priorMode==="place"&&state.query===b.dataset.station?"":b.dataset.station;els.q.value=state.query;refresh();if(mapReady&&filtered.length){const points=filtered.map(r=>[r.lon,r.lat]); const bounds=new maplibregl.LngLatBounds(points[0],points[0]);points.forEach(p=>bounds.extend(p));map.fitBounds(bounds,{padding:65,maxZoom:16,duration:reduced.matches?0:380})}}));
+stations.forEach(b=>b.addEventListener("click",()=>{const priorMode=state.mode;setSearchMode("place");state.query=priorMode==="place"&&state.query===b.dataset.station?"":b.dataset.station;els.q.value=state.query;refresh();fitToResults(65)}));
 $("#reset").addEventListener("click",clear);
 $("#toolbar-reset").addEventListener("click",clear);
 addEventListener("hashchange",()=>{if(location.hash==="#manage")return;if(!$("#map-view").hidden&&map)map.resize();state.selected=selectedHash();if(state.selected&&!filtered.some(x=>x.id===state.selected)){state.query="";state.type="all";els.q.value="";radios[0].checked=true;refresh()}else updateSelection()});
