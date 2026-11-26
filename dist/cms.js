@@ -7,13 +7,13 @@
   const form=$("#cms-form"),list=$("#cms-list"),status=$("#cms-status"),file=$("#cms-file");
   const editor=$("#editor-title"),remove=$("#cms-delete"),save=$("#cms-save");
   const gate=$("#login-gate"),authArea=$("#auth-area");
-  let editing=null,ready=false,me=null;
+  let editing=null,ready=false,me=null,stats=null;
   // Pin picker: click or drag on the schematic map to set lat/lon, keeping
   // the numeric inputs in sync. Uses the same projection as the public
   // fallback map in app.js (rebuildPins), so the pin lands where the
   // schematic shows it.
   const pinmap=$("#cms-pinmap"),pinEl=$("#cms-pin"),pinDots=$("#cms-pinmap-dots"),pinCoords=$("#cms-pin-coords");
-  const stationPoints={"秋葉原":[35.6982,139.773],"御徒町":[35.7073,139.7745],"上野":[35.7138,139.7773]};
+  const stationPoints=StoreData.stationPoints;
   const centerPoint=[(region[0][1]+region[1][1])/2,(region[0][0]+region[1][0])/2];
   function pinXY(lat,lon){return [11+(lon-region[0][0])/(region[1][0]-region[0][0])*78,7+(region[1][1]-lat)/(region[1][1]-region[0][1])*86];}
   function pinLatLon(x,y){return [region[1][1]-(y-7)/86*(region[1][1]-region[0][1]),region[0][0]+(x-11)/78*(region[1][0]-region[0][0])];}
@@ -29,7 +29,7 @@
   }
   function renderPinDots(){
     pinDots.replaceChildren();
-    for(const r of rows){const d=node("span",null,{class:"cms-dot",title:r.name});const [x,y]=pinXY(r.lat,r.lon);d.style.left=x+"%";d.style.top=y+"%";pinDots.append(d);}
+    for(const r of rows.slice(0,1000)){const d=node("span",null,{class:"cms-dot",title:r.name});const [x,y]=pinXY(r.lat,r.lon);d.style.left=x+"%";d.style.top=y+"%";pinDots.append(d);}
   }
   let pinDrag=false;
   function pinFromEvent(e){const rect=pinmap.getBoundingClientRect();const [la,lo]=pinLatLon((e.clientX-rect.left)/rect.width*100,(e.clientY-rect.top)/rect.height*100);placePin(la,lo,true);}
@@ -40,6 +40,10 @@
   for(const key of ["lat","lon"])form.elements.namedItem(key).addEventListener("input",syncPinFromInputs);
   form.elements.namedItem("station").addEventListener("change",e=>{const p=stationPoints[e.target.value];if(p)placePin(p[0],p[1],true);});
   placePin(centerPoint[0],centerPoint[1],true);
+  const stationSelect=form.elements.namedItem("station");
+  for(const st of StoreData.stations)stationSelect.append(node("option",st));
+  const pinTags=$("#cms-pinmap-tags");
+  for(const [st,[la,lo]] of Object.entries(stationPoints)){const t=node("span",st,{class:"cms-station-tag"});const [x,y]=pinXY(la,lo);t.style.left=x+"%";t.style.top=y+"%";pinTags.append(t);}
   function message(text){status.textContent=text;}
   async function api(path,init){
     const res=await fetch(path,init);
@@ -86,12 +90,18 @@
   function reset(focus=false){
     editing=null;form.reset();editor.textContent="新しい店舗を追加";save.textContent="追加する";remove.hidden=true;
     placePin(centerPoint[0],centerPoint[1],true);
+  const stationSelect=form.elements.namedItem("station");
+  for(const st of StoreData.stations)stationSelect.append(node("option",st));
+  const pinTags=$("#cms-pinmap-tags");
+  for(const [st,[la,lo]] of Object.entries(stationPoints)){const t=node("span",st,{class:"cms-station-tag"});const [x,y]=pinXY(la,lo);t.style.left=x+"%";t.style.top=y+"%";pinTags.append(t);}
     if(focus)form.elements.namedItem("name").focus();
   }
   function edit(id){
     const r=rows.find(a=>a.id===id);if(!r)return;
     editing=id;editor.textContent="店舗を編集";
     for(const key of ["name","station","area","type","lat","lon"])form.elements.namedItem(key).value=r[key];
+    form.elements.namedItem("verified").checked=!!r.verified;
+    form.elements.namedItem("source_url").value=r.source_url??"";
     placePin(r.lat,r.lon,false);
     save.textContent="変更を保存";remove.hidden=false;message("「"+r.name+"」を編集中です。");form.elements.namedItem("name").focus();
   }
@@ -100,7 +110,9 @@
     if(!rows.length){list.append(node("li","店舗がありません。"));return;}
     for(const r of rows){
       const li=node("li",null),block=node("span",null),b=node("button","編集",{type:"button",class:"action","aria-label":r.name+"を編集"});
-      block.append(node("strong",r.name),node("small",r.station+" ／ "+labels[r.type]));
+      block.append(node("strong",r.name),node("small",r.station+" ／ "+labels[r.type]+(r.verified?" ／ 実在確認済み":"")));
+      const st=stats&&stats.stores[r.id];
+      if(st&&(st.view||st.place||st.directions))block.append(node("small","流入: 詳細 "+st.view+" ／ 位置 "+st.place+" ／ ルート "+st.directions));
       b.addEventListener("click",()=>edit(r.id));li.append(block,b);list.append(li);
     }
     renderPinDots();
@@ -110,6 +122,8 @@
     try{me=await api("/api/me");}catch{me=null;}
     renderAuth();route();
     ready=await storeReady;
+    try{stats=await api("/api/admin/stats");}catch{stats=null;}
+    if(stats)$("#cms-stats").textContent="流入計測: 詳細表示 "+stats.totals.view+" ／ 位置リンク "+stats.totals.place+" ／ ルートリンク "+stats.totals.directions;
     renderList();
     if(!ready)message("店舗データを読み込めませんでした。再読み込みしてください。");
   })();
@@ -118,7 +132,7 @@
     if(!ready){message("店舗データを読み込めていません。再読み込みしてください。");return;}
     try{
       const values=Object.fromEntries(new FormData(form));
-      const payload={name:values.name,station:values.station,area:values.area,type:values.type,lat:values.lat,lon:values.lon};
+      const payload={name:values.name,station:values.station,area:values.area,type:values.type,lat:values.lat,lon:values.lon,verified:form.elements.namedItem("verified").checked,source_url:values.source_url?values.source_url:null};
       StoreData.validate({...payload,id:editing??"99"});
       const wasEditing=editing!==null;
       const init={headers:{"content-type":"application/json"},body:JSON.stringify(payload)};

@@ -1,9 +1,10 @@
-# 秋葉原・上野 カードショップ地図
+# 全国カードショップ地図
 
-架空の30店舗を使った、店舗検索と地図表示のサービスです。実店舗の案内には使えません。
+全国38駅の周辺に生成した架空の11,000店舗を使った、店舗検索と地図表示のサービスです。実店舗の案内には使えません。
 公開先: https://akiba.0g0.xyz
 
-- 店名・エリアで切り替えて検索し、店舗タイプで絞り込めます。地図は国土地理院タイル＋MapLibre、読み込めない環境では同梱の略図にフォールバックします。
+- 店名・エリアで切り替えて検索し、店舗タイプで絞り込めます。地図は国土地理院タイル＋MapLibre GL JS、読み込めない環境では同梱の略図にフォールバックします。第三者のライセンスと出典は [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) にまとめています。
+- 店舗データは `generate-stores.mjs` が決定的に生成する合成データです（実在の店舗ディレクトリ等からの転載ではありません）。
 - 店舗データはサーバー（Cloudflare D1）で管理します。検索画面は誰でも使えます。
 - 店舗の追加・編集・削除は店舗管理画面から行い、**0g0-id のログインが必須**です。未ログインでは管理画面に入れません。
 - Google マップは外部リンク（位置・徒歩ルート）のみ。埋め込みや API キーは使いません。位置情報は取得しません。
@@ -19,7 +20,7 @@ npm test       # データ層テスト + ワーカーテスト
 npm run check  # 構文チェック
 ```
 
-初期データは `dist/stores.csv` が正本で、`node build-data.mjs` で `dist/stores.json` を再生成します（CI で一致を検証）。本番 D1 への初期投入は `migrations/0001_init.sql` に同じ内容を含んでいます。
+初期データは `dist/stores.csv` が正本で、`node build-data.mjs` で `dist/stores.json` を再生成します（CI で一致を検証）。CSV と本番 D1 用の再投入 migration は `node generate-stores.mjs` でまとめて再生成できます（乱数の種は固定で、再実行しても同じデータになります）。
 
 ## デプロイ
 
@@ -29,6 +30,26 @@ npm run deploy
 ```
 
 `wrangler.toml` の `[vars]` に OIDC の設定（発行元・クライアント ID）を持ちます。クライアントは 0g0-id の DCR（RFC 7591）で登録した public クライアントで、シークレットはありません（PKCE S256）。
+
+## 実在確認（実在証明）
+
+店舗には「実在確認済み」の印を付けられます。条件は出典URL（https、実在の根拠ページ）の登録で、確認した日時（verified_at）がサーバー側で記録されます。出典のない店舗は確認済みにできません。公開画面では確認済みの店舗だけに印と出典リンクが表示され、それ以外は架空サンプルとして扱われます。同梱の11,000件はすべて未確認です。
+
+## 外部取り込み（Webhook）
+
+外部システムから店舗を取り込むための Webhook です。
+
+- `POST /api/webhooks/stores`、ヘッダー `X-Webhook-Secret: <共有シークレット>` が必須です。シークレットは Worker のシークレット `WEBHOOK_SECRET` で設定し、未設定の間は 503 を返します。
+- 本文は `{ "stores": [ {id, name, station, area, type, lat, lon, verified?, source_url?}, ... ] }`（配列そのものでも可）。1回あたり最大200件。
+- 各行は管理画面と同じ検証を通し、ID が既存なら更新、なければ追加（upsert）します。応答は `{ accepted, rejected: [{index, error}] }` で、通らなかった行と理由が返ります。
+
+## 流入計測
+
+公開画面での店舗詳細の表示と、Google マップへのリンク（位置／徒歩ルート）のクリックを `POST /api/events` で記録します（個人情報や位置情報は記録しません）。管理者は `GET /api/admin/stats` で店舗ごとの集計を取得でき、管理画面の一覧にも表示されます。
+
+## Slack 通知
+
+Worker のシークレット `SLACK_WEBHOOK_URL`（Slack Incoming Webhook の URL）を設定すると、店舗の追加・更新・削除、一括取り込み、Webhook 取り込みの結果が Slack に通知されます。未設定の場合は通知しません。
 
 ## 自分の環境で動かす（フォークする場合）
 
@@ -52,7 +73,7 @@ npm run deploy
 
 ## カスタマイズ
 
-- **地域・駅**: 表示範囲（REGION）と駅の一覧（STATIONS）は `dist/store-data.js` と `src/store-validation.mjs` の両方にあります。両者を一致させてください（片方だけ変えると、画面と API で許可範囲がずれます）。
+- **地域・駅**: 表示範囲（REGION）と駅の一覧（STATIONS）・駅座標（STATION_POINTS）は `dist/store-data.js` と `src/store-validation.mjs` の両方にあります。両者を一致させてください（片方だけ変えると、画面と API で許可範囲がずれます）。
 - **店舗タイプ**: `shop` / `play` / `retail` のラベルは同じ2ファイルの LABELS です。
 - **初期データ**: `dist/stores.csv` を編集し、`node build-data.mjs` で再生成して、同じ内容を新しい migration として追加します。同梱データはすべて架空のサンプルです。実在店舗を登録する場合は、名称・位置を各自で確認してください。
 

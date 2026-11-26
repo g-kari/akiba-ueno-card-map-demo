@@ -17,12 +17,12 @@ import {
 const SESSION_COOKIE = "akiba_session";
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const STATE_TTL_MS = 10 * 60 * 1000;
-const JSON_LIMIT = 300 * 1024;
+const JSON_LIMIT = 8 * 1024 * 1024;
 
 const SQL = {
-  listStores: "SELECT id, name, station, area, type, lat, lon FROM stores ORDER BY id",
-  insertStore: "INSERT INTO stores (id, name, station, area, type, lat, lon, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  updateStore: "UPDATE stores SET name = ?, station = ?, area = ?, type = ?, lat = ?, lon = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+  listStores: "SELECT id, name, station, area, type, lat, lon, verified, source_url, verified_at FROM stores ORDER BY id",
+  insertStore: "INSERT INTO stores (id, name, station, area, type, lat, lon, verified, source_url, verified_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  updateStore: "UPDATE stores SET name = ?, station = ?, area = ?, type = ?, lat = ?, lon = ?, verified = ?, source_url = ?, verified_at = ?, updated_at = ?, updated_by = ? WHERE id = ?",
   deleteStore: "DELETE FROM stores WHERE id = ?",
   clearStores: "DELETE FROM stores",
   accountBySub: "SELECT id FROM accounts WHERE sub = ?",
@@ -33,6 +33,8 @@ const SQL = {
   insertSession: "INSERT INTO sessions (token_hash, account_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
   sessionByHash: "SELECT account_id, expires_at FROM sessions WHERE token_hash = ?",
   deleteSession: "DELETE FROM sessions WHERE token_hash = ?",
+  insertEvent: "INSERT INTO events (store_id, kind, created_at) VALUES (?, ?, ?)",
+  eventStats: "SELECT store_id, kind, COUNT(*) AS n FROM events GROUP BY store_id, kind",
 };
 
 function json(status, data, headers = {}) {
@@ -47,7 +49,35 @@ function fail(status, message) {
 }
 
 function storeOut(row) {
-  return { id: row.id, name: row.name, station: row.station, area: row.area, type: row.type, lat: row.lat, lon: row.lon };
+  return {
+    id: row.id, name: row.name, station: row.station, area: row.area, type: row.type, lat: row.lat, lon: row.lon,
+    verified: row.verified === 1, source_url: row.source_url ?? null, verified_at: row.verified_at ?? null,
+  };
+}
+
+// Optional Slack notification (Incoming Webhook). No-ops when
+// SLACK_WEBHOOK_URL is not configured; never fails the request.
+async function notifySlack(env, text) {
+  if (!env.SLACK_WEBHOOK_URL) return;
+  try {
+    await fetch(env.SLACK_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+  } catch { /* notification is best-effort */ }
+}
+
+async function secretEqual(provided, expected) {
+  const [a, b] = await Promise.all([sha256Hex(provided), sha256Hex(expected)]);
+  return a === b;
+}
+
+// Stamps verified_at when a record is (newly) verified; clears it otherwise.
+function stampVerified(record, now) {
+  if (record.verified) { if (!record.verified_at) record.verified_at = now; }
+  else record.verified_at = null;
+  return record;
 }
 
 async function readJson(request) {
@@ -165,7 +195,7 @@ async function handleLogout(request, env) {
   });
 }
 
-async function route(request, env) {
+async function route(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method;
@@ -173,6 +203,72 @@ async function route(request, env) {
   if (path === "/api/stores" && method === "GET") {
     const { results } = await env.DB.prepare(SQL.listStores).all();
     return json(200, { version: 1, stores: results.map(storeOut) });
+  }
+
+  if (path === "/api/events" && method === "POST") {
+    try {
+      const body = await readJson(request);
+      if (!body || !/^[0-9]{2,5}$/.test(body.store_id || "") || !["view", "place", "directions"].includes(body.kind)) {
+        return fail(400, "イベントが不正です。");
+      }
+      await env.DB.prepare(SQL.insertEvent).bind(body.store_id, body.kind, new Date().toISOString()).run();
+      return new Response(null, { status: 204 });
+    } catch {
+      return fail(400, "イベントが不正です。");
+    }
+  }
+
+  // External intake: shared-secret webhook, upserts validated stores.
+  // Disabled (503) until WEBHOOK_SECRET is configured.
+  if (path === "/api/webhooks/stores" && method === "POST") {
+    if (!env.WEBHOOK_SECRET) return fail(503, "Webhookは未設定です。");
+    const provided = request.headers.get("x-webhook-secret") || "";
+    if (!(await secretEqual(provided, env.WEBHOOK_SECRET))) return fail(401, "認証に失敗しました。");
+    let list;
+    try {
+      const body = await readJson(request);
+      list = Array.isArray(body) ? body : body.stores;
+    } catch {
+      return fail(400, "JSONが不正です。");
+    }
+    if (!Array.isArray(list) || list.length === 0 || list.length > 200) {
+      return fail(400, "storesは1〜200件の配列で送ってください。");
+    }
+    const { results } = await env.DB.prepare(SQL.listStores).all();
+    const existing = new Set(results.map((r) => r.id));
+    const now = new Date().toISOString();
+    let accepted = 0;
+    const rejected = [];
+    for (let i = 0; i < list.length; i++) {
+      try {
+        const rec = stampVerified(validate(list[i]), now);
+        const args = [rec.name, rec.station, rec.area, rec.type, rec.lat, rec.lon, rec.verified ? 1 : 0, rec.source_url, rec.verified_at, now, null];
+        if (existing.has(rec.id)) {
+          await env.DB.prepare(SQL.updateStore).bind(...args, rec.id).run();
+        } else {
+          await env.DB.prepare(SQL.insertStore).bind(rec.id, ...args).run();
+          existing.add(rec.id);
+        }
+        accepted++;
+      } catch (err) {
+        rejected.push({ index: i, error: err.message });
+      }
+    }
+    if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】Webhook取り込み: " + accepted + "件反映" + (rejected.length ? " / " + rejected.length + "件却下" : "")));
+    return json(200, { accepted, rejected });
+  }
+
+  if (path === "/api/admin/stats" && method === "GET") {
+    const auth = await requireAdmin(request, env);
+    if (auth.error) return auth.error;
+    const { results } = await env.DB.prepare(SQL.eventStats).all();
+    const totals = { view: 0, place: 0, directions: 0 };
+    const stores = {};
+    for (const r of results) {
+      (stores[r.store_id] ||= { view: 0, place: 0, directions: 0 })[r.kind] = r.n;
+      totals[r.kind] += r.n;
+    }
+    return json(200, { totals, stores });
   }
 
   if (path === "/api/me" && method === "GET") {
@@ -198,10 +294,12 @@ async function route(request, env) {
     const now = new Date().toISOString();
     await env.DB.prepare(SQL.clearStores).run();
     for (const r of rows) {
+      stampVerified(r, now);
       await env.DB.prepare(SQL.insertStore)
-        .bind(r.id, r.name, r.station, r.area, r.type, r.lat, r.lon, now, auth.accountId)
+        .bind(r.id, r.name, r.station, r.area, r.type, r.lat, r.lon, r.verified ? 1 : 0, r.source_url, r.verified_at, now, auth.accountId)
         .run();
     }
+    if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】一括取り込み: " + rows.length + "件"));
     return json(200, { count: rows.length });
   }
 
@@ -211,17 +309,19 @@ async function route(request, env) {
     try {
       const body = await readJson(request);
       const { results } = await env.DB.prepare(SQL.listStores).all();
-      const record = validate({ ...body, id: nextId(results) });
+      const now = new Date().toISOString();
+      const record = stampVerified(validate({ ...body, id: nextId(results) }), now);
       await env.DB.prepare(SQL.insertStore)
-        .bind(record.id, record.name, record.station, record.area, record.type, record.lat, record.lon, new Date().toISOString(), auth.accountId)
+        .bind(record.id, record.name, record.station, record.area, record.type, record.lat, record.lon, record.verified ? 1 : 0, record.source_url, record.verified_at, now, auth.accountId)
         .run();
+      if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】店舗を追加: " + record.name + "（" + record.id + "）"));
       return json(201, { store: record });
     } catch (err) {
       return fail(400, err.message);
     }
   }
 
-  const storeMatch = path.match(/^\/api\/admin\/stores\/([0-9]{2,4})$/);
+  const storeMatch = path.match(/^\/api\/admin\/stores\/([0-9]{2,5})$/);
   if (storeMatch && (method === "PUT" || method === "DELETE")) {
     const auth = await requireAdmin(request, env);
     if (auth.error) return auth.error;
@@ -229,15 +329,18 @@ async function route(request, env) {
     if (method === "DELETE") {
       const res = await env.DB.prepare(SQL.deleteStore).bind(id).run();
       if (!res.meta || res.meta.changes === 0) return fail(404, "店舗が見つかりません。");
+      if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】店舗を削除: " + id));
       return json(200, { deleted: id });
     }
     try {
       const body = await readJson(request);
-      const record = validate({ ...body, id });
+      const now = new Date().toISOString();
+      const record = stampVerified(validate({ ...body, id }), now);
       const res = await env.DB.prepare(SQL.updateStore)
-        .bind(record.name, record.station, record.area, record.type, record.lat, record.lon, new Date().toISOString(), auth.accountId, id)
+        .bind(record.name, record.station, record.area, record.type, record.lat, record.lon, record.verified ? 1 : 0, record.source_url, record.verified_at, now, auth.accountId, id)
         .run();
       if (!res.meta || res.meta.changes === 0) return fail(404, "店舗が見つかりません。");
+      if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】店舗を更新: " + record.name + "（" + id + "）"));
       return json(200, { store: record });
     } catch (err) {
       return fail(400, err.message);
@@ -250,9 +353,9 @@ async function route(request, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     try {
-      return await route(request, env);
+      return await route(request, env, ctx);
     } catch (err) {
       console.error(err);
       return fail(500, "サーバーで問題が発生しました。");

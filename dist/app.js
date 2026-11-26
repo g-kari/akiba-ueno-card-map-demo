@@ -1,7 +1,9 @@
 "use strict";
 const $=s=>document.querySelector(s);
 const els={q:$("#q"),list:$("#list"),count:$("#count"),empty:$("#empty"),detail:$("#detail"),box:$("#mapbox"),tiles:$("#tiles"),fallback:$("#fallback-pins"),source:$("#source")};
-const stations=[...document.querySelectorAll("[data-station]")];
+const stationBox=document.querySelector(".stations");
+for(const st of StoreData.stations){const b=document.createElement("button");b.type="button";b.dataset.station=st;b.setAttribute("aria-pressed","false");b.textContent=st;stationBox.append(b);}
+const stations=[...stationBox.querySelectorAll("[data-station]")];
 const radios=[...document.querySelectorAll('input[name="type"]')];
 const {labels,region}=StoreData;
 const modes=[...document.querySelectorAll('input[name="mode"]')];
@@ -13,7 +15,7 @@ const aliases={"秋葉原":"アキバ 秋葉原駅 あきはばら Akihabara","�
 function node(tag,content,props={}){const n=document.createElement(tag);if(content!==null)n.textContent=content;for(const [key,value] of Object.entries(props))n.setAttribute(key,value);return n}
 function selectedHash(){const id=new URLSearchParams(location.hash.slice(1)).get("shop");return rows.find(r=>r.id===id)?.id??null}
 function setHash(){if(location.hash==="#manage")return;const url=new URL(location.href);url.hash=state.selected?"shop="+state.selected:"";history.replaceState(null,"",url.pathname+url.search+url.hash)}
-function rowButton(r){const b=node("button",null,{class:"row",type:"button","data-id":r.id,"data-type":r.type,"aria-pressed":"false"});const info=node("span",null);info.append(node("strong",r.name),node("small",r.station+"エリア ／ "+labels[r.type]));b.append(node("span",r.id,{class:"badge","aria-hidden":"true"}),info);b.addEventListener("click",()=>select(r.id,true));return b}
+function rowButton(r){const b=node("button",null,{class:"row",type:"button","data-id":r.id,"data-type":r.type,"aria-pressed":"false"});const info=node("span",null);info.append(node("strong",r.name),node("small",r.station+"エリア ／ "+labels[r.type]+(r.verified?" ／ 実在確認済み":"")));b.append(node("span",r.id,{class:"badge","aria-hidden":"true"}),info);b.addEventListener("click",()=>select(r.id,true));return b}
 function pin(group,fallback){
   const r=group[0], multiple=group.length>1;
   const b=node("button",null,{type:"button",class:"pin"+(fallback?" compact":""),"data-id":r.id,"data-type":multiple?"group":r.type,"aria-label":multiple?"同じ位置の店舗"+group.length+"件":r.id+" "+r.name,"aria-pressed":"false"});
@@ -34,6 +36,7 @@ function showPinGroup(group){
   panel.hidden=false;
   panel.querySelector("button").focus({preventScroll:true});
 }
+function sendEvent(kind,id){try{fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({store_id:id,kind}),keepalive:true}).catch(()=>{});}catch{}}
 function setSearchMode(mode){
   state.mode=mode;
   modes.forEach(e=>{e.checked=e.value===mode});
@@ -66,8 +69,17 @@ function updateSelection(){
   if(r){
     const urls=StoreData.links(r);
     const actions=node("div",null,{class:"detail-actions"});
-    actions.append(node("a","Google マップで位置を見る",{href:urls.place,target:"_blank",rel:"noopener noreferrer"}),node("a","徒歩ルートの例",{href:urls.directions,target:"_blank",rel:"noopener noreferrer"}));
+    const placeLink=node("a","Google マップで位置を見る",{href:urls.place,target:"_blank",rel:"noopener noreferrer"});
+    const dirLink=node("a","徒歩ルートの例",{href:urls.directions,target:"_blank",rel:"noopener noreferrer"});
+    placeLink.addEventListener("click",()=>sendEvent("place",r.id));
+    dirLink.addEventListener("click",()=>sendEvent("directions",r.id));
+    actions.append(placeLink,dirLink);
     els.detail.replaceChildren(node("strong",r.id+"  "+r.name),node("span",r.station+"エリア ／ "+r.area+" ／ "+labels[r.type]),actions,node("small","架空店舗です。リンク先はデモ座標で、実店舗への案内ではありません。"));
+    if(r.verified){
+      const proof=node("small","実在確認済み"+(r.verified_at?"（"+String(r.verified_at).slice(0,10)+"）":""));
+      if(r.source_url)proof.append(" ",node("a","出典",{href:r.source_url,target:"_blank",rel:"noopener noreferrer"}));
+      els.detail.append(proof);
+    }
   }else els.detail.replaceChildren(node("strong","店舗を選択"),node("span","一覧または地図のピンから店舗を選べます。"));
 }
 function fitToResults(padding){
@@ -77,7 +89,7 @@ function fitToResults(padding){
   points.forEach(p=>bounds.extend(p));
   map.fitBounds(bounds,{padding,maxZoom:16,duration:reduced.matches?0:380});
 }
-function select(id,center){$("#pin-group").hidden=true;state.selected=id;setHash();updateSelection();if(center&&mapReady){const r=filtered.find(t=>t.id===id);if(r)map.easeTo({center:[r.lon,r.lat],duration:reduced.matches?0:380})}
+function select(id,center){$("#pin-group").hidden=true;state.selected=id;sendEvent("view",id);setHash();updateSelection();if(center&&mapReady){const r=filtered.find(t=>t.id===id);if(r)map.easeTo({center:[r.lon,r.lat],duration:reduced.matches?0:380})}
 if(!center&&els.list.scrollHeight>els.list.clientHeight){const row=buttons.find(b=>b.dataset.id===id);if(row){const parent=els.list.getBoundingClientRect(),child=row.getBoundingClientRect();if(child.top<parent.top||child.bottom>parent.bottom)els.list.scrollTop+=child.top-parent.top}}
 }
 function clear(){state.query="";state.type="all";state.selected=null;els.q.value="";radios[0].checked=true;setSearchMode("place");refresh();els.q.focus()}
@@ -95,9 +107,9 @@ $("#toolbar-reset").addEventListener("click",clear);
 addEventListener("hashchange",()=>{if(location.hash==="#manage")return;if(!$("#map-view").hidden&&map)map.resize();state.selected=selectedHash();if(state.selected&&!filtered.some(x=>x.id===state.selected)){state.query="";state.type="all";els.q.value="";radios[0].checked=true;refresh()}else updateSelection()});
 function liveMap(){try{
 if(!window.maplibregl)return;
-map=new maplibregl.Map({container:els.tiles,style:{version:8,sources:{gsi:{type:"raster",tiles:["https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png"],tileSize:256,minzoom:5,maxzoom:18}},layers:[{id:"gsi",type:"raster",source:"gsi"}]},bounds:region,fitBoundsOptions:{padding:48},minZoom:11,maxZoom:18,attributionControl:false,dragRotate:false,pitchWithRotate:false,scrollZoom:false});
+map=new maplibregl.Map({container:els.tiles,style:{version:8,sources:{gsi:{type:"raster",tiles:["https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png"],tileSize:256,minzoom:5,maxzoom:18}},layers:[{id:"gsi",type:"raster",source:"gsi"}]},bounds:region,fitBoundsOptions:{padding:48},minZoom:3,maxZoom:18,attributionControl:false,dragRotate:false,pitchWithRotate:false,scrollZoom:false});
 map.touchZoomRotate.disableRotation();map.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
-function reveal(){if(mapReady)return;mapReady=true;els.tiles.removeAttribute("aria-hidden");els.box.classList.add("live");els.source.replaceChildren("出典：",node("a","国土地理院タイル",{href:"https://maps.gsi.go.jp/development/ichiran.html",target:"_blank",rel:"noopener noreferrer"})," ／ 店舗は架空");rebuildPins();updateSelection()}
+function reveal(){if(mapReady)return;mapReady=true;els.tiles.removeAttribute("aria-hidden");els.box.classList.add("live");els.source.replaceChildren("出典：",node("a","国土地理院タイル",{href:"https://maps.gsi.go.jp/development/ichiran.html",target:"_blank",rel:"noopener noreferrer"})," ／ 地図ライブラリ: MapLibre GL JS ／ 店舗は架空のサンプルです");rebuildPins();updateSelection()}
 let probeOk=false, settled=false;
 const probe=new Image(), [lon,lat]=[139.774,35.707], z=14, n=2**z, rad=lat*Math.PI/180;
 const tx=Math.floor((lon+180)/360*n),ty=Math.floor((1-Math.asinh(Math.tan(rad))/Math.PI)/2*n);

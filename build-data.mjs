@@ -1,10 +1,11 @@
 import {readFileSync,writeFileSync} from "node:fs";
+import {REGION,STATIONS} from "./src/store-validation.mjs";
 const head = "id,name,station,area,type,lon,lat";
 const [header,...lines]=readFileSync(new URL("./dist/stores.csv",import.meta.url),"utf8").trim().split(/\r?\n/);
 if(header!==head) throw Error("CSV header");
 const ids=new Set();
 const rows=lines.map(line=>{const a=line.split(","); const [id,name,station,area,type]=a;const lon=Number(a[5]),lat=Number(a[6]);
-if(a.length!==7||!/^\d{2}$/.test(id)||ids.has(id)||!name||!area||!["秋葉原","御徒町","上野"].includes(station)||!["shop","play","retail"].includes(type)||!(lon>139.76&&lon<139.79&&lat>35.69&&lat<35.72)) throw Error("Invalid store "+id);
+if(a.length!==7||!/^\d{5}$/.test(id)||ids.has(id)||!name||!area||!STATIONS.includes(station)||!["shop","play","retail"].includes(type)||!(lon>=REGION[0][0]&&lon<=REGION[1][0]&&lat>=REGION[0][1]&&lat<=REGION[1][1])) throw Error("Invalid store "+id);
 ids.add(id);return {id,name,station,area,type,lon,lat}});
 writeFileSync(new URL("./dist/stores.json",import.meta.url),JSON.stringify(rows));
 console.log(rows.length+" stores checked");

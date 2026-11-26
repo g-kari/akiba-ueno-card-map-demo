@@ -1,8 +1,9 @@
 "use strict";
 const StoreData=(()=>{
   const key="card-map-demo-stores-v1";
-  const region=[[139.7652,35.6968],[139.7818,35.7164]];
-  const stations=["秋葉原","御徒町","上野"];
+  const region=[[122,24],[146,45.6]];
+  const stations=["札幌", "旭川", "仙台", "盛岡", "秋田", "山形", "福島", "宇都宮", "高崎", "新潟", "長野", "金沢", "秋葉原", "御徒町", "上野", "東京", "新宿", "渋谷", "池袋", "横浜", "川崎", "千葉", "大宮", "静岡", "名古屋", "京都", "大阪", "難波", "神戸", "岡山", "広島", "松山", "高知", "博多", "小倉", "熊本", "鹿児島中央", "那覇"];
+  const stationPoints={"札幌":[43.0687,141.3508],"旭川":[43.7628,142.3589],"仙台":[38.2601,140.8824],"盛岡":[39.7014,141.1365],"秋田":[39.7168,140.1298],"山形":[38.2486,140.3272],"福島":[37.7543,140.459],"宇都宮":[36.5593,139.8986],"高崎":[36.3227,139.013],"新潟":[37.9119,139.0617],"長野":[36.6436,138.1889],"金沢":[36.5783,136.6478],"秋葉原":[35.6982,139.773],"御徒町":[35.7073,139.7745],"上野":[35.7138,139.7773],"東京":[35.6812,139.7671],"新宿":[35.6896,139.7006],"渋谷":[35.658,139.7016],"池袋":[35.7289,139.7104],"横浜":[35.4657,139.6224],"川崎":[35.5316,139.697],"千葉":[35.6132,140.1135],"大宮":[35.9065,139.6239],"静岡":[34.9717,138.3889],"名古屋":[35.1706,136.8816],"京都":[34.9855,135.7585],"大阪":[34.7024,135.4959],"難波":[34.6669,135.5008],"神戸":[34.6946,135.1949],"岡山":[34.6663,133.9186],"広島":[34.3977,132.4753],"松山":[33.8402,132.7517],"高知":[33.5471,133.5435],"博多":[33.5897,130.4207],"小倉":[33.887,130.8827],"熊本":[32.79,130.6889],"鹿児島中央":[31.5834,130.5419],"那覇":[26.2159,127.667]};
   const labels={shop:"カードショップ",play:"対戦スペース",retail:"取扱店"};
   const types=Object.keys(labels);
   const text=(x,field)=>{
@@ -14,14 +15,20 @@ const StoreData=(()=>{
     return Number(x);
   };
   function validate(raw){
-    if(!raw||typeof raw!=="object"||Array.isArray(raw)||typeof raw.id!=="string"||!/^[0-9]{2,4}$/.test(raw.id))throw Error("店舗IDが正しくありません。");
+    if(!raw||typeof raw!=="object"||Array.isArray(raw)||typeof raw.id!=="string"||!/^[0-9]{2,5}$/.test(raw.id))throw Error("店舗IDが正しくありません。");
     if(!stations.includes(raw.station))throw Error("最寄り駅を選んでください。");
     if(!types.includes(raw.type))throw Error("店舗タイプを選んでください。");
-    return {id:raw.id,name:text(raw.name,"店舗名"),station:raw.station,area:text(raw.area,"エリア"),type:raw.type,
+    const verified=raw.verified===true||raw.verified===1;
+    let sourceUrl=null;
+    if(raw.source_url!==undefined&&raw.source_url!==null&&raw.source_url!==""){if(typeof raw.source_url!=="string"||raw.source_url.length>300||!raw.source_url.startsWith("https://"))throw Error("出典URLは https:// で始まる300文字以内のURLで入力してください。");sourceUrl=raw.source_url;}
+    if(verified&&!sourceUrl)throw Error("実在確認には出典URLが必要です。");
+    const out={id:raw.id,name:text(raw.name,"店舗名"),station:raw.station,area:text(raw.area,"エリア"),type:raw.type,
       lat:coord(raw.lat,region[0][1],region[1][1],"緯度"),lon:coord(raw.lon,region[0][0],region[1][0],"経度")};
+    if(raw.verified!==undefined||raw.source_url!==undefined){out.verified=verified;out.source_url=sourceUrl;out.verified_at=verified&&typeof raw.verified_at==="string"?raw.verified_at:null;}
+    return out;
   }
   function validateRows(list){
-    if(!Array.isArray(list)||list.length>250)throw Error("店舗一覧は250件以下の配列にしてください。");
+    if(!Array.isArray(list)||list.length>20000)throw Error("店舗一覧は20000件以下の配列にしてください。");
     const clean=list.map(validate);
     if(new Set(clean.map(r=>r.id)).size!==clean.length)throw Error("同じ店舗IDが複数あります。");
     return clean;
@@ -32,7 +39,7 @@ const StoreData=(()=>{
     return validateRows(data.stores);
   }
   function encode(list){return JSON.stringify({version:1,stores:validateRows(list)},null,2);}
-  function nextId(rows){const used=new Set(rows.map(r=>r.id));for(let i=1;i<10000;i++){const id=String(i).padStart(2,"0");if(!used.has(id))return id;}throw Error("店舗IDを作れませんでした。");}
+  function nextId(rows){const used=new Set(rows.map(r=>r.id));for(let i=1;i<100000;i++){const id=String(i).padStart(5,"0");if(!used.has(id))return id;}throw Error("店舗IDを作れませんでした。");}
   function links(row){
     const xy=row.lat+","+row.lon;
     return {
@@ -45,6 +52,6 @@ const StoreData=(()=>{
     for(const r of rows){const key=r.lon+","+r.lat;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r);}
     return Array.from(groups.values());
   }
-  return {key,region,stations,labels,validate,validateRows,parse,encode,nextId,links,groups};
+  return {key,region,stations,stationPoints,labels,validate,validateRows,parse,encode,nextId,links,groups};
 })();
 if(typeof module!=="undefined")module.exports=StoreData;
