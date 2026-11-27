@@ -55,13 +55,15 @@
   async function refreshStores(){
     // The admin view needs the full dataset (list, edit lookup, export),
     // so it pages through the filtered API instead of one full-table read.
-    const all=[];let offset=0,total=Infinity;
-    while(offset<total){
-      const data=await api("/api/stores?limit=1000&offset="+offset);
-      total=data.total;
-      all.push(...data.stores);
-      offset+=data.stores.length;
-      if(!data.stores.length)break;
+    // The first page reports the total; the remaining pages are fetched
+    // four at a time instead of one round trip per page.
+    const first=await api("/api/stores?limit=1000&offset=0");
+    const all=[...first.stores];
+    const offsets=[];
+    for(let offset=first.stores.length;offset<first.total;offset+=1000)offsets.push(offset);
+    for(let i=0;i<offsets.length;i+=4){
+      const pages=await Promise.all(offsets.slice(i,i+4).map(offset=>api("/api/stores?limit=1000&offset="+offset)));
+      for(const page of pages)all.push(...page.stores);
     }
     const clean=StoreData.validateRows(all);
     setRows(clean);
@@ -115,15 +117,17 @@
     save.textContent="変更を保存";remove.hidden=false;message("「"+r.name+"」を編集中です。");form.elements.namedItem("name").focus();
   }
   function renderList(){
-    list.replaceChildren();$("#cms-count").textContent=rows.length+" 件";
-    if(!rows.length){list.append(node("li","店舗がありません。"));return;}
+    $("#cms-count").textContent=rows.length+" 件";
+    if(!rows.length){list.replaceChildren(node("li","店舗がありません。"));renderPinDots();return;}
+    const frag=document.createDocumentFragment();
     for(const r of rows){
       const li=node("li",null),block=node("span",null),b=node("button","編集",{type:"button",class:"action","aria-label":r.name+"を編集"});
       block.append(node("strong",r.name),node("small",r.station+" ／ "+labels[r.type]+(r.verified?" ／ 実在確認済み":"")));
       const st=stats&&stats.stores[r.id];
       if(st&&(st.view||st.place||st.directions))block.append(node("small","流入: 詳細 "+st.view+" ／ 位置 "+st.place+" ／ ルート "+st.directions));
-      b.addEventListener("click",()=>edit(r.id));li.append(block,b);list.append(li);
+      b.addEventListener("click",()=>edit(r.id));li.append(block,b);frag.append(li);
     }
+    list.replaceChildren(frag);
     renderPinDots();
   }
   addEventListener("hashchange",route);

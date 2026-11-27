@@ -102,6 +102,9 @@ function fakeDb(seedStores) {
         throw new Error("fake D1: unhandled first SQL: " + sql);
       },
       async all() {
+        if (sql.startsWith("SELECT COUNT(*) AS n FROM stores")) {
+          return { results: [{ n: applyStoreFilter(sql, args).rows.length }] };
+        }
         if (sql.startsWith("SELECT id, name, station")) {
           const { rows, rest } = applyStoreFilter(sql, args);
           const sorted = rows.sort((a, b) => a.id.localeCompare(b.id));
@@ -132,6 +135,9 @@ function fakeDb(seedStores) {
     };
   }
   db.prepare = (sql) => ({ bind: (...args) => stmt(sql, args), ...stmt(sql, []) });
+  // D1 batch(): every statement resolves like .all() and the results come
+  // back as one array, in order.
+  db.batch = async (stmts) => Promise.all(stmts.map((s) => s.all()));
   return db;
 }
 
