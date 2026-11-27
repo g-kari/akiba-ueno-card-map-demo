@@ -13,8 +13,12 @@
 // the same methods and register it in createDb(). Methods that write a
 // store take the validated record plus the server-stamped fields.
 
+const STORE_COLUMNS = "id, name, station, area, type, lat, lon, verified, source_url, verified_at";
+
 const SQL = {
-  listStores: "SELECT id, name, station, area, type, lat, lon, verified, source_url, verified_at FROM stores ORDER BY id",
+  listStores: "SELECT " + STORE_COLUMNS + " FROM stores ORDER BY id",
+  listStoreIds: "SELECT id FROM stores ORDER BY id",
+  storeSummary: "SELECT station, COUNT(*) AS n FROM stores GROUP BY station",
   insertStore: "INSERT INTO stores (id, name, station, area, type, lat, lon, verified, source_url, verified_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   updateStore: "UPDATE stores SET name = ?, station = ?, area = ?, type = ?, lat = ?, lon = ?, verified = ?, source_url = ?, verified_at = ?, updated_at = ?, updated_by = ? WHERE id = ?",
   deleteStore: "DELETE FROM stores WHERE id = ?",
@@ -31,6 +35,21 @@ const SQL = {
   deleteSession: "DELETE FROM sessions WHERE token_hash = ?",
 };
 
+// Builds the WHERE clause + bind args for a filtered store query.
+// Supported filters (all optional, combined with AND): station (exact),
+// id (exact), bbox ([minLon, minLat, maxLon, maxLat], inclusive).
+function storeFilterSql(q) {
+  const where = [];
+  const args = [];
+  if (q.station) { where.push("station = ?"); args.push(q.station); }
+  if (q.id) { where.push("id = ?"); args.push(q.id); }
+  if (q.bbox) {
+    where.push("lon >= ? AND lon <= ? AND lat >= ? AND lat <= ?");
+    args.push(q.bbox[0], q.bbox[2], q.bbox[1], q.bbox[3]);
+  }
+  return { clause: where.length ? " WHERE " + where.join(" AND ") : "", args };
+}
+
 function storeArgs(rec, updatedAt, updatedBy) {
   return [rec.name, rec.station, rec.area, rec.type, rec.lat, rec.lon,
     rec.verified ? 1 : 0, rec.source_url, rec.verified_at, updatedAt, updatedBy];
@@ -41,6 +60,26 @@ function d1Db(d1) {
     async listStores() {
       const { results } = await d1.prepare(SQL.listStores).all();
       return results;
+    },
+    // Filtered, paged read for the public API. Returns the page rows plus
+    // the total number of rows matching the filter (before paging), so the
+    // client can tell when a view is truncated.
+    async queryStores(q) {
+      const { clause, args } = storeFilterSql(q);
+      const countRow = await d1.prepare("SELECT COUNT(*) AS n FROM stores" + clause).bind(...args).first();
+      const { results } = await d1.prepare(
+        "SELECT " + STORE_COLUMNS + " FROM stores" + clause + " ORDER BY id LIMIT ? OFFSET ?"
+      ).bind(...args, q.limit, q.offset).all();
+      return { total: countRow ? countRow.n : 0, rows: results };
+    },
+    // Counts only (total + per-station); never returns store records.
+    async storeSummary() {
+      const { results } = await d1.prepare(SQL.storeSummary).all();
+      return { total: results.reduce((sum, r) => sum + r.n, 0), stations: results };
+    },
+    async listStoreIds() {
+      const { results } = await d1.prepare(SQL.listStoreIds).all();
+      return results.map((r) => r.id);
     },
     async insertStore(rec, updatedAt, updatedBy) {
       await d1.prepare(SQL.insertStore).bind(rec.id, ...storeArgs(rec, updatedAt, updatedBy)).run();
@@ -96,6 +135,28 @@ function memoryDb() {
   return {
     async listStores() {
       return [...stores.values()].sort((a, b) => a.id.localeCompare(b.id)).map((r) => ({ ...r }));
+    },
+    async queryStores(q) {
+      let rows = [...stores.values()];
+      if (q.station) rows = rows.filter((r) => r.station === q.station);
+      if (q.id) rows = rows.filter((r) => r.id === q.id);
+      if (q.bbox) {
+        rows = rows.filter((r) => r.lon >= q.bbox[0] && r.lon <= q.bbox[2] && r.lat >= q.bbox[1] && r.lat <= q.bbox[3]);
+      }
+      rows.sort((a, b) => a.id.localeCompare(b.id));
+      const total = rows.length;
+      return { total, rows: rows.slice(q.offset, q.offset + q.limit).map((r) => ({ ...r })) };
+    },
+    async storeSummary() {
+      const counts = new Map();
+      for (const r of stores.values()) counts.set(r.station, (counts.get(r.station) || 0) + 1);
+      const stations = [...counts.entries()]
+        .map(([station, n]) => ({ station, n }))
+        .sort((a, b) => a.station.localeCompare(b.station));
+      return { total: stores.size, stations };
+    },
+    async listStoreIds() {
+      return [...stores.keys()].sort();
     },
     async insertStore(rec, updatedAt, updatedBy) {
       stores.set(rec.id, {

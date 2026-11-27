@@ -8,7 +8,7 @@
 // accounts table. Everything shown to the browser or returned by the API
 // uses the internal account id instead.
 
-import { validate, validateRows, nextId } from "./store-validation.mjs";
+import { validate, validateRows, nextId, STATIONS, REGION } from "./store-validation.mjs";
 import { createDb } from "./db.mjs";
 import {
   getDiscovery, exchangeCode, verifyIdToken,
@@ -29,6 +29,48 @@ function json(status, data, headers = {}) {
 
 function fail(status, message) {
   return json(status, { error: message });
+}
+
+// Public store reads are always filtered and paged: the whole table is
+// never returned in one response. Callers narrow by station, by map
+// viewport (bbox), or by id, and page with limit/offset.
+const STORE_PAGE_LIMIT_MAX = 1000;
+const STORE_PAGE_LIMIT_DEFAULT = 1000;
+
+// Parses the GET /api/stores query parameters. Returns null on bad input.
+function parseStoreQuery(params) {
+  const q = { limit: STORE_PAGE_LIMIT_DEFAULT, offset: 0 };
+  const station = params.get("station");
+  if (station !== null) {
+    if (!STATIONS.includes(station)) return null;
+    q.station = station;
+  }
+  const id = params.get("id");
+  if (id !== null) {
+    if (!/^[0-9]{2,5}$/.test(id)) return null;
+    q.id = id;
+  }
+  const bbox = params.get("bbox");
+  if (bbox !== null) {
+    const parts = bbox.split(",").map(Number);
+    if (parts.length !== 4 || parts.some((v) => !Number.isFinite(v))) return null;
+    const [minLon, minLat, maxLon, maxLat] = parts;
+    if (minLon > maxLon || minLat > maxLat ||
+        minLon < REGION[0][0] || maxLon > REGION[1][0] ||
+        minLat < REGION[0][1] || maxLat > REGION[1][1]) return null;
+    q.bbox = parts;
+  }
+  const limit = params.get("limit");
+  if (limit !== null) {
+    if (!/^[0-9]+$/.test(limit)) return null;
+    q.limit = Math.min(STORE_PAGE_LIMIT_MAX, Math.max(1, Number(limit)));
+  }
+  const offset = params.get("offset");
+  if (offset !== null) {
+    if (!/^[0-9]+$/.test(offset)) return null;
+    q.offset = Number(offset);
+  }
+  return q;
 }
 
 function storeOut(row) {
@@ -180,9 +222,18 @@ async function route(request, env, ctx) {
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method;
 
+  // Counts only (total + per-station) for lightweight displays; the
+  // response never contains store records.
+  if (path === "/api/stores/summary" && method === "GET") {
+    const summary = await db.storeSummary();
+    return json(200, { version: 1, total: summary.total, stations: summary.stations });
+  }
+
   if (path === "/api/stores" && method === "GET") {
-    const results = await db.listStores();
-    return json(200, { version: 1, stores: results.map(storeOut) });
+    const q = parseStoreQuery(url.searchParams);
+    if (!q) return fail(400, "検索条件が不正です。");
+    const { total, rows } = await db.queryStores(q);
+    return json(200, { version: 1, total, limit: q.limit, offset: q.offset, stores: rows.map(storeOut) });
   }
 
   if (path === "/api/events" && method === "POST") {
@@ -214,8 +265,7 @@ async function route(request, env, ctx) {
     if (!Array.isArray(list) || list.length === 0 || list.length > 200) {
       return fail(400, "storesは1〜200件の配列で送ってください。");
     }
-    const results = await db.listStores();
-    const existing = new Set(results.map((r) => r.id));
+    const existing = new Set(await db.listStoreIds());
     const now = new Date().toISOString();
     let accepted = 0;
     const rejected = [];
@@ -285,9 +335,9 @@ async function route(request, env, ctx) {
     if (auth.error) return auth.error;
     try {
       const body = await readJson(request);
-      const results = await db.listStores();
+      const ids = await db.listStoreIds();
       const now = new Date().toISOString();
-      const record = stampVerified(validate({ ...body, id: nextId(results) }), now);
+      const record = stampVerified(validate({ ...body, id: nextId(ids.map((id) => ({ id }))) }), now);
       await db.insertStore(record, now, auth.accountId);
       if (ctx) ctx.waitUntil(notifySlack(env, "【akiba地図】店舗を追加: " + record.name + "（" + record.id + "）"));
       return json(201, { store: record });

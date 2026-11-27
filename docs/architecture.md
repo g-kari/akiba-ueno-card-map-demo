@@ -1,6 +1,6 @@
 # 設計・構成ドキュメント（akiba-card-map）
 
-最終確認: 2026-11-26（本格実装への移行時点）
+最終確認: 2026-11-27（店舗取得の viewport 連動化時点）
 この文書は、本サービスの構成を「何が・どこに・どう連携するか」で固定し、今後の変更で迷わないための正本とする。実態と食い違う変更をしたら、この文書も同じ PR で更新する。
 
 ## 1. 概要と前提
@@ -31,7 +31,7 @@
 | 同位置グループ | `#pin-group` | 同一座標に複数店舗がある場合の選択パネル |
 | フッター | `footer` | 注意書きと初期データ CSV（`stores.csv`）のダウンロードリンク |
 
-選択状態は URL ハッシュ `#shop=<id>` にも反映し、リンク共有・再読み込みで復元できる（管理画面表示中は上書きしない）。データは起動時に `GET /api/stores` で取得する。
+選択状態は URL ハッシュ `#shop=<id>` にも反映し、リンク共有・再読み込みで復元できる（管理画面表示中は上書きしない）。データは全件取得せず、地図の表示範囲（viewport）に連動して `GET /api/stores?bbox=...` で範囲分だけ取得する。初期表示は地図の初期表示範囲（全国）の bbox で取得し、地図を移動・ズームするたびに新しい範囲で再取得して一覧とピンを差し替える。範囲内の件数がページ上限（1,000件）を超える場合は、レスポンスの `total`（範囲内の総件数）を使って「拡大すると絞り込めます」と表示し、無言で欠落させない。駅ボタンを押すと地図がその駅へ移動し、結果として bbox 取得で表示される（実地図が使えない略図フォールバック時のみ `?station=` で駅単位に取得する）。店名・地名の検索と店舗タイプの絞り込みは、取得済みの範囲分に対してブラウザ側で行う。`#shop=<id>` のディープリンクで対象が範囲外の場合は `?id=` でその1件だけを追加取得する。
 
 ### 2.2 店舗管理画面（`#manage`、`cms.js` が表示制御、ログイン必須）
 
@@ -92,7 +92,8 @@
 
 | メソッド・パス | 認証 | 内容 |
 | --- | --- | --- |
-| `GET /api/stores` | 不要 | 全店舗を `{version: 1, stores: [...]}` で返す |
+| `GET /api/stores` | 不要 | 店舗を絞り込んで `{version: 1, total, limit, offset, stores: [...]}` で返す。クエリ: `station`（駅名の完全一致）、`bbox=minLon,minLat,maxLon,maxLat`（表示範囲、REGION 内のみ）、`id`（完全一致）、`limit`／`offset`（ページング、limit は最大1,000・既定1,000）。フィルタなしでもページング既定値で上限が効き、全件一括にはならない。`total` は上限適用前の該当件数 |
+| `GET /api/stores/summary` | 不要 | 総件数と駅ごとの件数だけを `{version: 1, total, stations: [{station, n}]}` で返す（店舗レコードは含めない） |
 | `GET /api/me` | セッション | `{accountId}`（内部 ID のみ）。未ログインは 401 |
 | `GET /auth/login` | 不要 | IdP の authorize へリダイレクト |
 | `GET /auth/callback` | 不要 | コード交換とセッション発行、管理画面へリダイレクト |
@@ -109,7 +110,7 @@
 | `dist/index.html` | 画面骨格、略図 SVG、フォーム定義、スクリプト／CSS の読み込み順 | なし |
 | `dist/style.css` | 全画面のスタイルとアニメーション | HTML のクラス／ID |
 | `dist/store-data.js` | ブラウザ側データ層: 定数（region／stations／labels）、検証、JSON 変換、Google マップリンク生成、同座標グループ化。DOM に触れない。Node からも `module.exports` で読み込める | なし（単独でテスト可能） |
-| `dist/app.js` | 検索画面: 状態管理、絞り込み、一覧・ピン・詳細の描画、実地図の遅延読み込みとフォールバック判定、`GET /api/stores` での初期化（`boot()`）、`setRows()` の公開 | `StoreData`、DOM、（任意）MapLibre |
+| `dist/app.js` | 検索画面: 状態管理、絞り込み、一覧・ピン・詳細の描画、実地図の遅延読み込みとフォールバック判定、表示範囲に連動した `GET /api/stores?bbox=...` 取得（`boot()`／`syncFromMap()`）、`setRows()` の公開 | `StoreData`、DOM、（任意）MapLibre |
 | `dist/cms.js` | 管理画面: ハッシュルーティングとログインゲート、認証状態表示、CRUD（管理 API 経由）、JSON 入出力 | `StoreData`、app.js が公開する `rows`／`setRows()`／`storeReady` 等のグローバル |
 | `src/worker.mjs` | Worker 本体: 静的アセットへの振り分け、公開 API、認証ルート、管理 API、セッション判定 | `store-validation.mjs`、`oidc.mjs`、D1 |
 | `src/oidc.mjs` | 0g0-id クライアント: discovery 固定、PKCE、コード交換、ID トークン検証（JWKS／ES256） | WebCrypto、fetch |
