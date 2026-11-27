@@ -31,6 +31,45 @@ function fail(status, message) {
   return json(status, { error: message });
 }
 
+// The two public read endpoints (GET /api/stores and /api/stores/summary)
+// serve data that changes only through admin edits or the intake webhook,
+// so anonymous responses are cached at the edge for a short TTL and the
+// browser gets matching cache headers. Requests carrying the session
+// cookie (the signed-in admin UI) always bypass the cache and read fresh
+// data; everyone else may see data that is up to PUBLIC_CACHE_TTL_MS old.
+const PUBLIC_CACHE_TTL_MS = 60 * 1000;
+const PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300";
+
+function publicJson(status, data) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": PUBLIC_CACHE_CONTROL },
+  });
+}
+
+async function publicCacheGet(request) {
+  if (sessionCookieValue(request)) return null;
+  if (typeof caches === "undefined") return null;
+  try {
+    const hit = await caches.default.match(request);
+    if (!hit) return null;
+    const at = Number(hit.headers.get("x-akiba-cached-at") || 0);
+    if (!at || Date.now() - at > PUBLIC_CACHE_TTL_MS) return null;
+    return hit;
+  } catch { return null; }
+}
+
+async function publicCachePut(request, response, ctx) {
+  if (sessionCookieValue(request)) return;
+  if (typeof caches === "undefined") return;
+  try {
+    const stored = response.clone();
+    stored.headers.set("x-akiba-cached-at", String(Date.now()));
+    const put = caches.default.put(request, stored);
+    if (ctx) ctx.waitUntil(put); else await put;
+  } catch { /* the edge cache is best-effort */ }
+}
+
 // Public store reads are always filtered and paged: the whole table is
 // never returned in one response. Callers narrow by station, by map
 // viewport (bbox), or by id, and page with limit/offset.
@@ -225,15 +264,23 @@ async function route(request, env, ctx) {
   // Counts only (total + per-station) for lightweight displays; the
   // response never contains store records.
   if (path === "/api/stores/summary" && method === "GET") {
+    const cached = await publicCacheGet(request);
+    if (cached) return cached;
     const summary = await db.storeSummary();
-    return json(200, { version: 1, total: summary.total, stations: summary.stations });
+    const res = publicJson(200, { version: 1, total: summary.total, stations: summary.stations });
+    await publicCachePut(request, res, ctx);
+    return res;
   }
 
   if (path === "/api/stores" && method === "GET") {
     const q = parseStoreQuery(url.searchParams);
     if (!q) return fail(400, "検索条件が不正です。");
+    const cached = await publicCacheGet(request);
+    if (cached) return cached;
     const { total, rows } = await db.queryStores(q);
-    return json(200, { version: 1, total, limit: q.limit, offset: q.offset, stores: rows.map(storeOut) });
+    const res = publicJson(200, { version: 1, total, limit: q.limit, offset: q.offset, stores: rows.map(storeOut) });
+    await publicCachePut(request, res, ctx);
+    return res;
   }
 
   if (path === "/api/events" && method === "POST") {

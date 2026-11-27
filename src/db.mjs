@@ -63,13 +63,22 @@ function d1Db(d1) {
     },
     // Filtered, paged read for the public API. Returns the page rows plus
     // the total number of rows matching the filter (before paging), so the
-    // client can tell when a view is truncated.
+    // client can tell when a view is truncated. The count and the page run
+    // as one D1 batch (a single round trip) instead of two sequential
+    // queries; providers without batch() fall back to the sequential pair.
     async queryStores(q) {
       const { clause, args } = storeFilterSql(q);
-      const countRow = await d1.prepare("SELECT COUNT(*) AS n FROM stores" + clause).bind(...args).first();
-      const { results } = await d1.prepare(
+      const countStmt = d1.prepare("SELECT COUNT(*) AS n FROM stores" + clause).bind(...args);
+      const pageStmt = d1.prepare(
         "SELECT " + STORE_COLUMNS + " FROM stores" + clause + " ORDER BY id LIMIT ? OFFSET ?"
-      ).bind(...args, q.limit, q.offset).all();
+      ).bind(...args, q.limit, q.offset);
+      if (typeof d1.batch === "function") {
+        const [countRes, pageRes] = await d1.batch([countStmt, pageStmt]);
+        const countRow = countRes.results && countRes.results[0];
+        return { total: countRow ? countRow.n : 0, rows: pageRes.results };
+      }
+      const countRow = await countStmt.first();
+      const { results } = await pageStmt.all();
       return { total: countRow ? countRow.n : 0, rows: results };
     },
     // Counts only (total + per-station); never returns store records.

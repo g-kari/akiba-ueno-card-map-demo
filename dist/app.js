@@ -9,7 +9,7 @@ const {labels,region}=StoreData;
 const modes=[...document.querySelectorAll('input[name="mode"]')];
 const reduced=matchMedia("(prefers-reduced-motion: reduce)");
 const state={type:"all",mode:"place",query:"",selected:null};
-let rows=[],filtered=[],map=null,mapReady=false,markers=[],buttons=[];
+let rows=[],filtered=[],map=null,mapReady=false,buttons=[];
 // Viewport-driven loading: `rows` only ever holds the stores for the
 // current map view (or the focused station). `serverTotal` is the number
 // of stores inside the current view before the page cap, so a truncated
@@ -53,22 +53,50 @@ function refresh(){
   if(!filtered.some(r=>r.id===state.selected))state.selected=null;
   $("#pin-group").hidden=true;
   setHash();els.count.textContent=filtered.length+" 件"+(serverTotal!==null&&serverTotal>rows.length?"（この範囲は全"+serverTotal+"件中 "+rows.length+" 件まで表示中。拡大すると絞り込めます）":"");els.empty.hidden=filtered.length!==0;
-  els.list.replaceChildren();buttons=filtered.map(r=>{const item=node("li",null),b=rowButton(r);item.append(b);els.list.append(item);return b});
+  const frag=document.createDocumentFragment();
+  buttons=filtered.map(r=>{const item=node("li",null),b=rowButton(r);item.append(b);frag.append(item);return b});
+  els.list.replaceChildren(frag);
   rebuildPins();updateSelection();
   stations.forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.station===activeStation||(state.mode==="place"&&state.query!==""&&normalize(b.dataset.station)===normalize(state.query)))));
 }
+// The current view's coordinate groups. The schematic fallback renders
+// them as DOM pins, but the live map draws them as one GeoJSON layer:
+// hundreds of DOM markers (one element per group, repositioned by
+// MapLibre on every frame) were the main pan/zoom jank, while the layer
+// data is plain objects the canvas renderer consumes directly.
+let currentGroups=[],groupByFirstId=new Map();
 function rebuildPins(){
-  els.fallback.replaceChildren();markers.forEach(m=>m.remove());markers=[];
-  for(const group of StoreData.groups(filtered)){
+  currentGroups=StoreData.groups(filtered);
+  groupByFirstId=new Map(currentGroups.map(g=>[g[0].id,g]));
+  if(mapReady){updatePinSource();return;}
+  els.fallback.replaceChildren();
+  for(const group of currentGroups){
     const r=group[0],p=pin(group,true);
     p.style.left=(11+(r.lon-region[0][0])/(region[1][0]-region[0][0])*78)+"%";
     p.style.top=(7+(region[1][1]-r.lat)/(region[1][1]-region[0][1])*86)+"%";
     els.fallback.append(p);
-    if(mapReady){const el=pin(group,false);markers.push(new maplibregl.Marker({element:el,anchor:"center"}).setLngLat([r.lon,r.lat]).addTo(map))}
   }
 }
+function pinFeatures(){
+  return currentGroups.map(group=>{
+    const r=group[0],multiple=group.length>1;
+    return {type:"Feature",geometry:{type:"Point",coordinates:[r.lon,r.lat]},
+      properties:{id:r.id,label:multiple?String(group.length):r.id,kind:multiple?"group":r.type}};
+  });
+}
+function updatePinSource(){
+  const src=map&&map.getSource("store-pins");
+  if(src)src.setData({type:"FeatureCollection",features:pinFeatures()});
+}
+function updateSelectedPin(){
+  const src=map&&map.getSource("selected-pin");
+  if(!src)return;
+  const r=filtered.find(t=>t.id===state.selected);
+  src.setData({type:"FeatureCollection",features:r?[{type:"Feature",geometry:{type:"Point",coordinates:[r.lon,r.lat]},properties:{}}]:[]});
+}
 function updateSelection(){
-  for(const b of [...buttons,...els.fallback.children,...markers.map(m=>m.getElement())])b.setAttribute("aria-pressed",String(b.groupIds?b.groupIds.includes(state.selected):b.dataset.id===state.selected));
+  for(const b of [...buttons,...els.fallback.children])b.setAttribute("aria-pressed",String(b.groupIds?b.groupIds.includes(state.selected):b.dataset.id===state.selected));
+  updateSelectedPin();
   const r=filtered.find(t=>t.id===state.selected);
   if(r){
     const urls=StoreData.links(r);
@@ -105,6 +133,11 @@ async function syncFromMap(){
   // screens); clamp it to the region the API accepts.
   const bbox=[Math.max(region[0][0],b.getWest()),Math.max(region[0][1],b.getSouth()),Math.min(region[1][0],b.getEast()),Math.min(region[1][1],b.getNorth())];
   if(bbox[0]>=bbox[2]||bbox[1]>=bbox[3]){applyFetch({rows:[],total:0});return;}
+  // Round the viewport out to a ~100 m grid, so pans that land on nearly
+  // the same view reuse the same API cache entry instead of minting a
+  // unique URL (and a fresh database read) for every pixel of movement.
+  bbox[0]=Math.floor(bbox[0]*1000)/1000;bbox[1]=Math.floor(bbox[1]*1000)/1000;
+  bbox[2]=Math.ceil(bbox[2]*1000)/1000;bbox[3]=Math.ceil(bbox[3]*1000)/1000;
   try{
     const result=await fetchStores({bbox:bbox.join(","),limit:"1000"});
     if(seq!==viewSeq)return;
@@ -158,9 +191,22 @@ $("#toolbar-reset").addEventListener("click",clear);
 addEventListener("hashchange",async()=>{if(location.hash==="#manage")return;if(!$("#map-view").hidden&&map)map.resize();const hid=new URLSearchParams(location.hash.slice(1)).get("shop");state.selected=hid&&rows.some(r=>r.id===hid)?hid:null;if(hid&&!state.selected){try{const one=await fetchStores({id:hid});if(one.rows.length){rows=[...rows,...one.rows];state.selected=hid;state.query="";state.type="all";els.q.value="";radios[0].checked=true;refresh();return;}}catch{/* keep the current view */}}if(state.selected&&!filtered.some(x=>x.id===state.selected)){state.query="";state.type="all";els.q.value="";radios[0].checked=true;refresh()}else updateSelection()});
 function liveMap(){try{
 if(!window.maplibregl)return;
-map=new maplibregl.Map({container:els.tiles,style:{version:8,sources:{gsi:{type:"raster",tiles:["https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png"],tileSize:256,minzoom:5,maxzoom:18}},layers:[{id:"gsi",type:"raster",source:"gsi"}]},bounds:region,fitBoundsOptions:{padding:48},minZoom:3,maxZoom:18,attributionControl:false,dragRotate:false,pitchWithRotate:false,scrollZoom:false});
+map=new maplibregl.Map({container:els.tiles,style:{version:8,glyphs:"https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",sources:{gsi:{type:"raster",tiles:["https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png"],tileSize:256,minzoom:5,maxzoom:18},"store-pins":{type:"geojson",data:{type:"FeatureCollection",features:[]}},"selected-pin":{type:"geojson",data:{type:"FeatureCollection",features:[]}}},layers:[{id:"gsi",type:"raster",source:"gsi"},{id:"pins-selected",type:"circle",source:"selected-pin",paint:{"circle-radius":21,"circle-opacity":0,"circle-stroke-color":"#9d222b","circle-stroke-width":3}},{id:"pins-circle",type:"circle",source:"store-pins",paint:{"circle-radius":17,"circle-color":["match",["get","kind"],"play","#543e84","retail","#195a48","group","#272d37","#22466d"],"circle-stroke-color":"#ffffff","circle-stroke-width":2}},{id:"pins-label",type:"symbol",source:"store-pins",layout:{"text-field":["get","label"],"text-font":["Noto Sans Bold"],"text-size":11,"text-allow-overlap":true,"text-ignore-placement":true},paint:{"text-color":"#ffffff"}}]},bounds:region,fitBoundsOptions:{padding:48},minZoom:3,maxZoom:18,attributionControl:false,dragRotate:false,pitchWithRotate:false,scrollZoom:false});
 map.touchZoomRotate.disableRotation();map.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
-function reveal(){if(mapReady)return;mapReady=true;els.tiles.removeAttribute("aria-hidden");els.box.classList.add("live");els.source.replaceChildren("出典：",node("a","国土地理院タイル",{href:"https://maps.gsi.go.jp/development/ichiran.html",target:"_blank",rel:"noopener noreferrer"})," ／ 地図ライブラリ: MapLibre GL JS ／ 店舗は架空のサンプルです");rebuildPins();updateSelection();if(!moveHooked){moveHooked=true;map.on("moveend",onMoveEnd);}syncFromMap()}
+let lastPinTap=0;
+function onPinTap(e){
+  const stamp=e.originalEvent?e.originalEvent.timeStamp:0;
+  if(stamp&&stamp===lastPinTap)return; // one tap hits both the label and circle layers
+  lastPinTap=stamp;
+  const f=e.features&&e.features[0],group=f&&groupByFirstId.get(f.properties.id);
+  if(!group)return;
+  if(group.length>1)showPinGroup(group);else select(group[0].id,false);
+}
+map.on("click","pins-circle",onPinTap);
+map.on("click","pins-label",onPinTap);
+map.on("mouseenter","pins-circle",()=>{map.getCanvas().style.cursor="pointer"});
+map.on("mouseleave","pins-circle",()=>{map.getCanvas().style.cursor=""});
+function reveal(){if(mapReady)return;mapReady=true;els.tiles.removeAttribute("aria-hidden");els.box.classList.add("live");els.source.replaceChildren("出典：",node("a","国土地理院タイル",{href:"https://maps.gsi.go.jp/development/ichiran.html",target:"_blank",rel:"noopener noreferrer"})," ／ 地図ライブラリ: MapLibre GL JS ／ 店舗は架空のサンプルです");els.fallback.replaceChildren();rebuildPins();updateSelection();if(!moveHooked){moveHooked=true;map.on("moveend",onMoveEnd);}syncFromMap()}
 let probeOk=false, settled=false;
 const probe=new Image(), [lon,lat]=[139.774,35.707], z=14, n=2**z, rad=lat*Math.PI/180;
 const tx=Math.floor((lon+180)/360*n),ty=Math.floor((1-Math.asinh(Math.tan(rad))/Math.PI)/2*n);

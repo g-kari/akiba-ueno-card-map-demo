@@ -3,6 +3,14 @@
 This project uses the following third-party software and content. Their
 licenses and terms are reproduced or referenced here.
 
+## Noto Sans font glyphs (map pin labels)
+
+Pin labels on the live map are drawn by MapLibre from Noto Sans Bold
+glyph PBFs served by OpenFreeMap
+(`https://tiles.openfreemap.org/fonts/`). Noto Sans is licensed under
+the SIL Open Font License 1.1
+(https://scripts.sil.org/OFL).
+
 ## MapLibre GL JS (version 5.6.1)
 
 Loaded at runtime from the unpkg CDN (`https://unpkg.com/maplibre-gl@5.6.1/`).
