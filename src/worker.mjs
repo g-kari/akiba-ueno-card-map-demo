@@ -265,9 +265,10 @@ async function route(request, env, ctx) {
   // response never contains store records.
   if (path === "/api/stores/summary" && method === "GET") {
     const cached = await publicCacheGet(request);
-    if (cached) return cached;
+    if (cached) { const res = new Response(cached.body, cached); res.headers.set("x-akiba-cache", "hit"); return res; }
     const summary = await db.storeSummary();
     const res = publicJson(200, { version: 1, total: summary.total, stations: summary.stations });
+    res.headers.set("x-akiba-cache", "miss");
     await publicCachePut(request, res, ctx);
     return res;
   }
@@ -276,9 +277,10 @@ async function route(request, env, ctx) {
     const q = parseStoreQuery(url.searchParams);
     if (!q) return fail(400, "検索条件が不正です。");
     const cached = await publicCacheGet(request);
-    if (cached) return cached;
+    if (cached) { const res = new Response(cached.body, cached); res.headers.set("x-akiba-cache", "hit"); return res; }
     const { total, rows } = await db.queryStores(q);
     const res = publicJson(200, { version: 1, total, limit: q.limit, offset: q.offset, stores: rows.map(storeOut) });
+    res.headers.set("x-akiba-cache", "miss");
     await publicCachePut(request, res, ctx);
     return res;
   }
