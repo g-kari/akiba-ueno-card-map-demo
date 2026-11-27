@@ -53,8 +53,17 @@
     return body;
   }
   async function refreshStores(){
-    const data=await api("/api/stores");
-    const clean=StoreData.validateRows(data.stores);
+    // The admin view needs the full dataset (list, edit lookup, export),
+    // so it pages through the filtered API instead of one full-table read.
+    const all=[];let offset=0,total=Infinity;
+    while(offset<total){
+      const data=await api("/api/stores?limit=1000&offset="+offset);
+      total=data.total;
+      all.push(...data.stores);
+      offset+=data.stores.length;
+      if(!data.stores.length)break;
+    }
+    const clean=StoreData.validateRows(all);
     setRows(clean);
     renderList();
     return clean;
@@ -85,7 +94,7 @@
     }
     if(showManage){renderList();$("#cms-title").focus({preventScroll:true});}
     else if(showGate){$("#gate-title").focus({preventScroll:true});}
-    else if(ready){loadMap();requestAnimationFrame(()=>{if(map)map.resize();});}
+    else if(ready){loadMap();if(typeof syncFromMap==="function")syncFromMap();requestAnimationFrame(()=>{if(map)map.resize();});}
   }
   function reset(focus=false){
     editing=null;form.reset();editor.textContent="新しい店舗を追加";save.textContent="追加する";remove.hidden=true;
@@ -122,6 +131,10 @@
     try{me=await api("/api/me");}catch{me=null;}
     renderAuth();route();
     ready=await storeReady;
+    // The public boot only loads the current viewport. When signed in,
+    // load the full dataset (paged) so the admin list/edit/export are
+    // complete.
+    if(me){try{await refreshStores();}catch{/* keep the boot rows */}}
     try{stats=await api("/api/admin/stats");}catch{stats=null;}
     if(stats)$("#cms-stats").textContent="流入計測: 詳細表示 "+stats.totals.view+" ／ 位置リンク "+stats.totals.place+" ／ ルートリンク "+stats.totals.directions;
     renderList();

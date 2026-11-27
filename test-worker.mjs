@@ -37,6 +37,20 @@ function fakeDb(seedStores) {
     states: new Map(),
     nextAccountId: 1,
   };
+  // Applies the storeFilterSql conditions (station / id / bbox, in that
+  // arg order) to the fake rows; returns the filtered rows and the args
+  // that remain (limit/offset for the paged query).
+  function applyStoreFilter(sql, args) {
+    let rows = [...db.stores];
+    let i = 0;
+    if (sql.includes("station = ?")) { const v = args[i++]; rows = rows.filter((r) => r.station === v); }
+    if (sql.includes("id = ?")) { const v = args[i++]; rows = rows.filter((r) => r.id === v); }
+    if (sql.includes("lon >= ?")) {
+      const [minLon, maxLon, minLat, maxLat] = args.slice(i, i + 4); i += 4;
+      rows = rows.filter((r) => r.lon >= minLon && r.lon <= maxLon && r.lat >= minLat && r.lat <= maxLat);
+    }
+    return { rows, rest: args.slice(i) };
+  }
   function stmt(sql, args) {
     return {
       async run() {
@@ -81,6 +95,7 @@ function fakeDb(seedStores) {
         throw new Error("fake D1: unhandled run SQL: " + sql);
       },
       async first() {
+        if (sql.startsWith("SELECT COUNT(*) AS n FROM stores")) return { n: applyStoreFilter(sql, args).rows.length };
         if (sql.startsWith("SELECT id FROM accounts")) return db.accounts.find((a) => a.sub === args[0]) ?? null;
         if (sql.startsWith("SELECT nonce, code_verifier")) return db.states.get(args[0]) ?? null;
         if (sql.startsWith("SELECT account_id, expires_at FROM sessions")) return db.sessions.get(args[0]) ?? null;
@@ -88,7 +103,21 @@ function fakeDb(seedStores) {
       },
       async all() {
         if (sql.startsWith("SELECT id, name, station")) {
-          return { results: [...db.stores].sort((a, b) => a.id.localeCompare(b.id)) };
+          const { rows, rest } = applyStoreFilter(sql, args);
+          const sorted = rows.sort((a, b) => a.id.localeCompare(b.id));
+          if (sql.includes("LIMIT ? OFFSET ?")) {
+            const [limit, offset] = rest;
+            return { results: sorted.slice(offset, offset + limit) };
+          }
+          return { results: sorted };
+        }
+        if (sql.startsWith("SELECT id FROM stores")) {
+          return { results: [...db.stores].sort((a, b) => a.id.localeCompare(b.id)).map((r) => ({ id: r.id })) };
+        }
+        if (sql.startsWith("SELECT station, COUNT(*)")) {
+          const map = new Map();
+          for (const r of db.stores) map.set(r.station, (map.get(r.station) || 0) + 1);
+          return { results: [...map.entries()].map(([station, n]) => ({ station, n })) };
         }
         if (sql.includes("FROM events")) {
           const map = new Map();
@@ -133,6 +162,44 @@ const call = (path, init = {}) => worker.fetch(new Request(ORIGIN + path, init),
 
   const create = await call("/api/admin/stores", { method: "POST", body: JSON.stringify(good) });
   ok(create.status === 401, "POST /api/admin/stores without a session is 401");
+}
+
+// ---------- filtered / paged public reads + summary ----------
+// Seed state here: 01 （秋葉原, 35.7002, 139.7708), 02 （上野, 35.7107, 139.7787).
+{
+  const byStation = await (await call("/api/stores?station=" + encodeURIComponent("秋葉原"))).json();
+  ok(byStation.total === 1 && byStation.stores.length === 1 && byStation.stores[0].id === "01", "station filter returns only that station, with its total");
+  const badStation = await call("/api/stores?station=" + encodeURIComponent("新橋"));
+  ok(badStation.status === 400, "an unknown station is 400");
+
+  const inBox = await (await call("/api/stores?bbox=139.76,35.69,139.775,35.705")).json();
+  ok(inBox.total === 1 && inBox.stores[0].id === "01", "bbox returns only the stores inside the box");
+  const outBox = await (await call("/api/stores?bbox=139.70,35.65,139.71,35.66")).json();
+  ok(outBox.total === 0 && outBox.stores.length === 0, "a bbox away from every store is empty");
+  const invertedBox = await call("/api/stores?bbox=139.78,35.69,139.77,35.70");
+  ok(invertedBox.status === 400, "an inverted bbox is 400");
+  const wideBox = await call("/api/stores?bbox=100,20,150,50");
+  ok(wideBox.status === 400, "a bbox outside the region is 400");
+
+  const page1 = await (await call("/api/stores?limit=1&offset=0")).json();
+  const page2 = await (await call("/api/stores?limit=1&offset=1")).json();
+  ok(page1.total === 2 && page1.stores.length === 1 && page2.stores.length === 1 && page1.stores[0].id !== page2.stores[0].id, "limit/offset pages through the result with a stable total");
+  const capped = await (await call("/api/stores?limit=99999")).json();
+  ok(capped.limit === 1000 && capped.stores.length === 2, "limit is capped at 1000");
+  const badLimit = await call("/api/stores?limit=abc");
+  ok(badLimit.status === 400, "a non-numeric limit is 400");
+
+  const byId = await (await call("/api/stores?id=02")).json();
+  ok(byId.total === 1 && byId.stores[0].id === "02", "id filter returns exactly that store");
+  const badId = await call("/api/stores?id=abc");
+  ok(badId.status === 400, "a malformed id is 400");
+
+  const summaryRes = await call("/api/stores/summary");
+  const summary = await summaryRes.json();
+  ok(summaryRes.status === 200 && summary.total === 2 && !("stores" in summary), "summary returns counts only, no store records");
+  const aki = summary.stations.find((s) => s.station === "秋葉原");
+  const ueno = summary.stations.find((s) => s.station === "上野");
+  ok(summary.stations.length === 2 && aki && aki.n === 1 && ueno && ueno.n === 1, "summary counts per station");
 }
 
 // ---------- OIDC: stub the IdP, sign a real ES256 ID token ----------
@@ -292,6 +359,14 @@ try {
     body: JSON.stringify({ store_id: "00042", kind: "place" }),
   });
   ok(ev.status === 204, "events work on the memory provider");
+  const memSummary = await (await memCall("/api/stores/summary")).json();
+  ok(memSummary.total === 1 && memSummary.stations.length === 1 && memSummary.stations[0].station === "那覇" && memSummary.stations[0].n === 1, "summary works on the memory provider");
+  const memStation = await (await memCall("/api/stores?station=" + encodeURIComponent("那覇"))).json();
+  ok(memStation.total === 1 && memStation.stores[0].id === "00042", "station filter works on the memory provider");
+  const memBox = await (await memCall("/api/stores?bbox=130,25,135,30")).json();
+  ok(memBox.total === 0 && memBox.stores.length === 0, "bbox filter works on the memory provider");
+  const memId = await (await memCall("/api/stores?id=00042")).json();
+  ok(memId.total === 1, "id filter works on the memory provider");
 }
 
 console.log(checks + " checks passed");
